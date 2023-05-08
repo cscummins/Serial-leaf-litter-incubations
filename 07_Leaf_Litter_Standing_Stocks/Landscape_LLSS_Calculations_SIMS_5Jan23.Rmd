@@ -1,0 +1,169 @@
+---
+title: "Landscape_LLSS_Calculations_SIMS_5Jan23"
+author: "Carolyn Cummins"
+date: "1/5/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This file is for calculating the highest and lowest average values for CBOM in the landscape streams for the SIMS
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+```
+
+
+```{r}
+
+master.landscape.cbom <- read.csv("landscape_cbom_calculations_master_31Oct2020.csv")
+master.landscape.cbom$sample.date<-as.Date(with(master.landscape.cbom, paste(sample.yr,sample.mo,sample.day,sep="-")),"%Y-%m-%d")
+master.landscape.cbom$month_year<-with(master.landscape.cbom, paste(sample.yr,sample.mo,sep="-"))
+
+
+```
+
+
+```{r}
+
+master.landsc.cbom.leaves <- filter(master.landscape.cbom, om.category=="LEAF")
+
+master.landsc.cbom.leaves.si.yr1 <- master.landsc.cbom.leaves %>% filter(between(sample.date, as.Date('2017-09-21'), as.Date('2018-11-01')))
+master.landsc.cbom.leaves.si.yr1 <- master.landsc.cbom.leaves.si.yr1 %>%  filter(stream=="WS02" | stream=="WS06" | stream=="WS07" | stream=="WS08" | stream=="WS13" | stream=="WS14" | stream=="WS18" | stream=="WS27" | stream=="WS31" | stream=="WS32" | stream=="WS36" )
+
+master.landsc.cbom.leaves.si.yr2 <- master.landsc.cbom.leaves %>% filter(between(sample.date, as.Date('2018-08-31'), as.Date('2019-11-01')))
+master.landsc.cbom.leaves.si.yr2 <- master.landsc.cbom.leaves.si.yr2 %>%  filter(stream=="CWCR" | stream=="HNCR" | stream=="LCCR" | stream=="TOWR" | stream=="USHF" | stream=="WS09" | stream=="WS34" | stream=="WS37" | stream=="WS55")
+#included October even though it's outside the period in which we sampled the YR1 and YR2 streams
+```
+
+Paired stream  data - carpentry
+```{r}
+paired.coarse1 <- read.csv("monthly_core_coarse_OM.csv") #import coarse data
+
+paired.coarse1$Ashed = as.numeric(paired.coarse1$Ashed) #make ashed column numeric 
+
+paired.coarse1$Dry_Mass = as.numeric(paired.coarse1$Dry_Mass) #make dry mass column numeric
+
+paired.coarse <- paired.coarse1 %>%
+  mutate(AFDM.g = Dry_Mass - Ashed) %>% #calculates g AFDM
+  mutate(gAFDM_m2 = AFDM.g / 0.049) #converts to grams AFDM/m2
+
+paired.coarse$Sample_Date <- as.Date(paired.coarse$Sample_Date, "%m/%d/%y")
+
+paired.coarse <- paired.coarse %>%
+  mutate(month = format(Sample_Date,"%m"),year= format(Sample_Date, "%Y"))
+
+paired.coarse["gAFDM_m2"][is.na(paired.coarse["gAFDM_m2"])] <- 0 #replace NAs with zero
+
+summ_paired_coarse <- paired.coarse %>% #summarize OM by month, calculating mean+se
+  group_by(Stream, month, Sample_Date, year, OM_Type, Core)%>% #group data by month
+  summarise(mean.gAFDM.m2 = mean(gAFDM_m2),
+            gAFDM.m2.se =sd(gAFDM_m2)/sqrt(n()))
+
+#select relevant columns from landscape SI YR1 and YR2
+cbom.si.yr1.lvs <- master.landsc.cbom.leaves.si.yr1 %>% select(sample.mo, sample.yr, sample.date, stream, om.category, cbom.afdm.g.m2)
+
+cbom.si.yr2.lvs <- master.landsc.cbom.leaves.si.yr2 %>% select(sample.mo, sample.yr, sample.date, stream, om.category, cbom.afdm.g.m2)
+
+colnames(cbom.si.yr1.lvs)[colnames(cbom.si.yr1.lvs)=="cbom.afdm.g.m2"] <- "mean.gAFDM.m2"
+colnames(cbom.si.yr2.lvs)[colnames(cbom.si.yr2.lvs)=="cbom.afdm.g.m2"] <- "mean.gAFDM.m2"
+```
+
+merge paired data with landscape data -- YR2 only
+```{r}
+#first, select relevant columns from paired df
+summ_paired_coarse2 <- summ_paired_coarse %>% select(month, year, Sample_Date, Stream, OM_Type, mean.gAFDM.m2)
+
+#rename columns from the paired streams df to match the landscape
+colnames(summ_paired_coarse2)[colnames(summ_paired_coarse2)=="month"] <- "sample.mo"
+colnames(summ_paired_coarse2)[colnames(summ_paired_coarse2)=="year"] <- "sample.yr"
+colnames(summ_paired_coarse2)[colnames(summ_paired_coarse2)=="Sample_Date"] <- "sample.date"
+colnames(summ_paired_coarse2)[colnames(summ_paired_coarse2)=="Stream"] <- "stream"
+colnames(summ_paired_coarse2)[colnames(summ_paired_coarse2)=="OM_Type"] <- "om.category"
+
+#filter for YR2 dates and leaves only
+summ_paired_coarse3 <- summ_paired_coarse2 %>% filter(between(sample.date, as.Date('2018-08-31'), as.Date('2019-11-01'))) %>% filter(om.category=="LEAF")
+
+summ_paired_coarse3$sample.mo <- as.numeric(summ_paired_coarse3$sample.mo)
+
+#filter again for only the months we have for the landscape streams -- 1, 4, 7, 10
+summ_paired_coarse4 <- summ_paired_coarse3 %>% filter(sample.mo %in% c(1,4,7,10))
+
+#change class for summ_paired_coarse4
+summ_paired_coarse4$sample.mo <- as.integer(summ_paired_coarse4$sample.mo)
+summ_paired_coarse4$sample.yr <- as.integer(summ_paired_coarse4$sample.yr)
+
+#now bind the paired with the landscape
+paired_lndscp_llss_yr2_si <- rbind(summ_paired_coarse4, cbom.si.yr2.lvs)
+
+#Create bound yr1_yr2 dataframe
+landscape_llss_yr1_yr2_si <- rbind(cbom.si.yr1.lvs, paired_lndscp_llss_yr2_si)
+
+si.llss.yr1yr2.summ.strm.date <- landscape_llss_yr1_yr2_si %>%
+  group_by(stream, sample.mo) %>%
+  summarise(mean.gAFDM.m2 = mean(mean.gAFDM.m2))
+
+summ.strm.wide_yr1yr2 <- pivot_wider(si.llss.yr1yr2.summ.strm.date, names_from = sample.mo, values_from = mean.gAFDM.m2)
+mean(summ.strm.wide_yr1yr2$"1")
+mean(summ.strm.wide_yr1yr2$"7")
+
+```
+
+```{r}
+#by stream and month -- necessary to get stream-level averages...
+si.llss.yr1.summ.strm.date <- cbom.si.yr1.lvs %>%
+  group_by(stream, sample.mo) %>%
+  summarise(mean.gAFDM.m2 = mean(mean.gAFDM.m2))
+
+si.llss.yr2.summ.strm.date <- paired_lndscp_llss_yr2_si %>%
+  group_by(stream, sample.mo) %>%
+  summarise(mean.gAFDM.m2 = mean(mean.gAFDM.m2))
+
+#by month -- overall averages across the landscape
+si.llss.yr1.summ.date <- si.llss.yr1.summ.strm.date %>% 
+  group_by(sample.mo) %>% 
+  summarise(mean.cbom.gm2.overall <- mean(mean.gAFDM.m2))
+
+si.llss.yr2.summ.date <- si.llss.yr2.summ.strm.date %>% 
+  group_by(sample.mo) %>% 
+  summarise(mean.cbom.gm2.overall <- mean(mean.gAFDM.m2))
+
+si.llss.yr1yr2.summ.month <- landscape_llss_yr1_yr2_si %>% 
+  group_by(sample.mo) %>% 
+  summarise(mean.cbom.gm2.overall <- mean(mean.gAFDM.m2))
+
+#try just using raw data not averaging at stream level first?
+si.llss.yr1.summ.date.test <- cbom.si.yr1.lvs %>% 
+  group_by(sample.mo) %>% 
+  summarise(mean.cbom.gm2.overall <- mean(mean.gAFDM.m2))
+
+si.llss.yr2.summ.date.test <- paired_lndscp_llss_yr2_si %>% 
+  group_by(sample.mo) %>% 
+  summarise(mean.cbom.gm2.overall <- mean(mean.gAFDM.m2))
+
+```
+
+
+Try pivoting the stream-level data
+Get a % change from January to July for each stream, then average those percentages
+```{r}
+summ.strm.wide_yr1 <- pivot_wider(si.llss.yr1.summ.strm.date, names_from = sample.mo, values_from = mean.gAFDM.m2)
+summ.strm.wide_yr2 <- pivot_wider(si.llss.yr2.summ.strm.date, names_from = sample.mo, values_from = mean.gAFDM.m2)
+
+summ.strm.wide_yr1$jul.div.jan <- summ.strm.wide_yr1$"7"/summ.strm.wide_yr1$"1"
+summ.strm.wide_yr1$percent.julvjan <- (summ.strm.wide_yr1$"7"/summ.strm.wide_yr1$"1")*100
+summ.strm.wide_yr1$percent.lower.julvjan <- 100-summ.strm.wide_yr1$percent.julvjan
+
+mean(summ.strm.wide_yr1$percent.lower.julvjan)
+
+summ.strm.wide_yr2$jul.div.jan <- summ.strm.wide_yr2$"7"/summ.strm.wide_yr2$"1"
+summ.strm.wide_yr2$percent.julvjan <- summ.strm.wide_yr2$jul.div.jan*100
+summ.strm.wide_yr2$percent.lower.julvjan <- 100-summ.strm.wide_yr2$percent.julvjan
+
+summ.strm.wide_yr2.no37 <- summ.strm.wide_yr2 %>% filter(!stream %in% "WS37")
+mean(summ.strm.wide_yr2.no37$percent.lower.julvjan)
+```
+
+

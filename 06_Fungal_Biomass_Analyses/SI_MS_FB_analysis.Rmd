@@ -1,0 +1,331 @@
+---
+title: "SI_MS_FB_analysis"
+author: "Carolyn Cummins"
+date: "3/2/2023"
+output: html_document
+---
+Analysis for the fungal biomass data from YR2 fine mesh Rhodo bags - updated 2 March 2023 with new FB data and new analysis...
+
+
+Packages
+```{r}
+
+library(tidyverse)
+library(lubridate)
+library(Rmisc)
+library(lme4)
+library(lmerTest)
+library(ggplot2)
+library(viridis)
+library(RColorBrewer)
+library(ggsci)
+library(ggeffects)
+library(patchwork)
+library(stringr)
+
+Boltz <- (8.617*(10^-5))
+
+```
+
+
+Reading in the FB data and the YR2 litter breakdown data, correct "WS05" to "TOWR" and "2019-06-05" to "2019-06-06"
+```{r}
+
+erg_fb_yr2_si <- read.csv("Ergosterol_FB _SI_YR2_CSC_2Mar23.csv")
+
+erg_fb_yr2_si <- erg_fb_yr2_si %>% mutate(date_dep=mdy(date_dep))
+erg_fb_yr2_si <- erg_fb_yr2_si %>% mutate(date_coll=mdy(date_coll))
+erg_fb_yr2_si <- erg_fb_yr2_si %>% mutate(erg_ext_date=mdy(erg_ext_date))
+
+erg_fb_yr2_si["stream"][erg_fb_yr2_si["stream"] == "WS05"] <- "TOWR"
+
+#
+
+fine_yr2_si <- read.csv("fine_SI_YR2_4Mar23.csv")
+fine_yr2_si <- fine_yr2_si %>% mutate(date_dep=mdy(date_dep))
+fine_yr2_si <- fine_yr2_si %>% mutate(date_coll=mdy(date_coll))
+
+fine_yr2_si["stream"][fine_yr2_si["stream"] == "WS05"] <- "TOWR"
+
+```
+
+
+Subsetting the fine-mesh litter breakdown data for just rhodo
+```{r}
+
+fine_yr2_si_rhodo <- fine_yr2_si %>% filter(rhodo_acer=="R")
+
+```
+
+
+Get the accurate ash fraction for each fine-mesh bag in the FB analysis. Vlad initially assumed 0.1 as the ash fraction for every sample, but we have more accurate data than that for each sample, so we'll use that here
+```{r}
+
+erg_fb_yr2_si <- erg_fb_yr2_si[-441,]
+
+all.equal(erg_fb_yr2_si$bagID, fine_yr2_si_rhodo$bagID)
+all.equal(erg_fb_yr2_si$date_dep,fine_yr2_si_rhodo$date_dep)
+all.equal(erg_fb_yr2_si$date_coll,fine_yr2_si_rhodo$date_coll)
+#all true
+
+#Create "ash fraction" column in the fine_yr2_si_rhodo_df
+fine_yr2_si_rhodo <- fine_yr2_si_rhodo %>% mutate(ash_fraction=((tin_ash_g-tin_g)/(tin_DM_g-tin_g)))
+
+#make a new df that will allow me to merge the ash_fraction column I just created with the FB data
+fine_yr2_si_rhodo_ash_fraction <- fine_yr2_si_rhodo %>% select(bag_ID,stream,date_dep,date_coll,ash_fraction)
+
+#delete the former ash_fraction column from the erg_fb_yr2_si df
+erg_fb_yr2_si <- erg_fb_yr2_si %>% select(!ash_fraction)
+
+erg_fb_yr2_si <- full_join(erg_fb_yr2_si, fine_yr2_si_rhodo_ash_fraction)
+
+```
+
+
+Now, correct the ergosterol/FB data based on the updated ash fraction -- following the calculations in the ergosterol Excel sheet that Vlad sent on 27 Feb 23
+```{r}
+
+erg_fb_yr2_si.2 <- erg_fb_yr2_si %>% mutate(afdm_g=dry_mass.g*(1-ash_fraction))
+erg_fb_yr2_si.2 <- erg_fb_yr2_si.2 %>% mutate(erg_ug_per_gAFDM=corr_erg_per_sample_ug/afdm_g)
+erg_fb_yr2_si.2 <- erg_fb_yr2_si.2 %>% mutate(fb_mg_per_gAFDM=erg_ug_per_gAFDM/5.5)
+
+#make a bag_n column so we can merge with the fine-mesh data
+erg_fb_yr2_si.2$bag_n <- substring(erg_fb_yr2_si.2$bag_ID,2,5)
+erg_fb_yr2_si.2$bag_n <- as.numeric(erg_fb_yr2_si.2$bag_n)
+
+```
+
+
+Read in the version of the litter breakdown data that has k-values, subset for only R fine mesh
+```{r}
+
+k_yr2_si <- read.csv("litter_breakdown_coarse_fine_yr2_all.4Mar23.csv")
+k_yr2_si <- k_yr2_si %>% mutate(date_dep=ymd(date_dep))
+k_yr2_si <- k_yr2_si %>% mutate(date_coll=ymd(date_coll))
+
+k_yr2_si_R <- k_yr2_si %>% filter(rhodo_acer=="R")
+k_yr2_si_R_fine <- k_yr2_si_R %>% select(bag_n, stream, rhodo_acer, date_dep, date_coll, days_in_record, percent_afdm_rem_F, ln_percent_afdm_rem_F, abs_val_k_fine)
+all.equal(k_yr2_si_R_fine$date_dep, erg_fb_yr2_si.2$date_dep)
+all.equal(k_yr2_si_R_fine$date_coll, erg_fb_yr2_si.2$date_coll)
+
+```
+
+
+Merging
+```{r}
+
+merged_lb_erg <- merge(erg_fb_yr2_si.2, k_yr2_si_R_fine, by=c("bag_n", "date_dep", "date_coll", "stream", "days_in_record"))
+merged_lb_erg <- merged_lb_erg[order(merged_lb_erg$date_dep, merged_lb_erg$bag_n),]
+merged_lb_erg <- na.omit(merged_lb_erg) #440 -> 274
+
+```
+
+Add temp in
+```{r}
+
+#read in the temp data and format
+dep_temp_si_yr2 <- read.csv("landscape_deployment_temp_masterlong_SIyr2_UPD23Feb23.csv")
+dep_temp_si_yr2 <- dep_temp_si_yr2 %>% mutate(start_date=ymd(start_date))
+dep_temp_si_yr2 <- dep_temp_si_yr2 %>% mutate(end_date=ymd(end_date))
+
+colnames(dep_temp_si_yr2)[colnames(dep_temp_si_yr2)=="start_date"] <- "date_dep"
+colnames(dep_temp_si_yr2)[colnames(dep_temp_si_yr2)=="end_date"] <- "date_coll"
+colnames(dep_temp_si_yr2)[colnames(dep_temp_si_yr2)=="days_in_record"] <- "days_in_record_temp"
+
+#deployments
+deployments_yr2 <- read.csv("SI_yr2_deployments_UPD23Feb23.csv")
+deployments_yr2 <- deployments_yr2 %>% mutate(date_dep=mdy(date_dep))
+deployments_yr2 <- deployments_yr2 %>% mutate(date_coll=mdy(date_coll))
+
+
+#delete annoying first column
+dep_temp_si_yr2$X <- NULL
+
+#merge deployments to the k and erg df
+merged_lb_erg_dep <- left_join(merged_lb_erg, deployments_yr2, by= c("date_dep","date_coll"))
+
+#merge temp to the previous
+merged_lb_erg_temp <- left_join(merged_lb_erg_dep, dep_temp_si_yr2, by=c("date_dep", "date_coll", "deployment", "stream"))
+
+```
+
+
+Add flow in
+```{r}
+
+#read in the temp data and format
+dep_flow_si_yr2 <- read.csv("landscape_deployment_discharge_masterlong_SIyr2_UPD23Feb23.csv")
+dep_flow_si_yr2 <- dep_flow_si_yr2 %>% mutate(start_date=ymd(start_date))
+dep_flow_si_yr2 <- dep_flow_si_yr2 %>% mutate(end_date=ymd(end_date))
+
+colnames(dep_flow_si_yr2)[colnames(dep_flow_si_yr2)=="start_date"] <- "date_dep"
+colnames(dep_flow_si_yr2)[colnames(dep_flow_si_yr2)=="end_date"] <- "date_coll"
+colnames(dep_flow_si_yr2)[colnames(dep_flow_si_yr2)=="days_in_record"] <- "days_in_record_flow"
+
+
+#delete annoying first column
+dep_flow_si_yr2$X <- NULL
+
+#merge flow data to the rest of the data
+
+merged_lb_erg_temp_flow <- merge(merged_lb_erg_temp, dep_flow_si_yr2, by=c("date_dep", "date_coll", "deployment", "stream"))
+
+
+```
+
+
+Some exploratory plots
+```{r}
+
+fbvk_plot<-ggplot(merged_lb_erg_temp_flow,aes(x=fb_mg_per_gAFDM,y=abs_val_k_fine))+theme_classic()+
+  geom_point()+geom_smooth(method="lm")+
+  theme(legend.title=element_blank())+xlab("Fungal biomass (mg/g AFDM)")+ylab("k (fine-mesh)")+
+  theme(legend.text=element_text(size=14, face="bold"))+theme(plot.title=element_text(size=20, face="bold"))+
+  theme(axis.title=element_text(size=18, face="bold"))+theme(axis.text=element_text(size=14, face="bold"))
+fbvk_plot
+
+tempvfb_plot<-ggplot(merged_lb_erg_temp_flow,aes(x=mean_temp,y=fb_mg_per_gAFDM))+theme_classic()+
+  geom_point()+geom_smooth(method="lm")+
+  theme(legend.title=element_blank())+xlab("Mean deployment temperature (°C)")+ylab("Fungal biomass (mg/g AFDM)")+theme(legend.text=element_text(size=14, face="bold"))+
+  theme(axis.title=element_text(size=18, face="bold"))+theme(axis.text=element_text(size=14, face="bold"))
+tempvfb_plot
+
+```
+
+Add MTE Calculations into merged_lb_erg_temp
+```{r}
+
+merged_lb_erg_temp_flow$ln_kfine <- log(merged_lb_erg_temp_flow$abs_val_k_fine)
+merged_lb_erg_temp_flow$mean_temp_kel <- merged_lb_erg_temp_flow$mean_temp + 273.15
+merged_lb_erg_temp_flow$one.k.T<-(1/((merged_lb_erg_temp_flow$mean_temp_kel)*(8.617*(10^-5))))
+
+```
+
+
+Standardize predictors for the temp_flow df
+```{r}
+#centered 1/kT
+mean.one.k.T <- mean(merged_lb_erg_temp_flow$one.k.T)
+merged_lb_erg_temp_flow$one.k.T.cent <- (merged_lb_erg_temp_flow$one.k.T - mean.one.k.T)
+
+#z-scored flow
+mean.flow <- mean(merged_lb_erg_temp_flow$mean_flow)
+sd.flow <- sd(merged_lb_erg_temp_flow$mean_flow)
+merged_lb_erg_temp_flow$mean_flow_st <- ((merged_lb_erg_temp_flow$mean_flow - mean.flow)/sd.flow)
+
+#centered FB
+mean.FB.R.YR2 <- mean(merged_lb_erg_temp_flow$fb_mg_per_gAFDM)
+merged_lb_erg_temp_flow$fb_mg_per_gAFDM.cent <- (merged_lb_erg_temp_flow$fb_mg_per_gAFDM - mean.FB.R.YR2)
+
+```
+
+
+Models - k~fb, fb~temp
+```{r}
+
+model_fbvk <- lmer(abs_val_k_fine ~ fb_mg_per_gAFDM + mean_flow + (1|stream) + (1|date_dep), data=merged_lb_erg_temp_flow)
+summary(model_fbvk)
+
+model_tempvfb <- lmer(fb_mg_per_gAFDM ~ mean_temp + mean_flow + (1|stream) + (1|date_dep), data=merged_lb_erg_temp_flow)
+summary(model_tempvfb)
+
+#temp increases FB and FB increases breakdown
+
+```
+
+
+
+Models - Ea with and without FB as a predictor
+```{r}
+
+model.temp.flow <- lmer(log(abs_val_k_fine) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=merged_lb_erg_temp_flow)
+summary(model.temp.flow)
+confint(model.temp.flow, level=0.95)
+#Ea in this model is 0.40
+
+model.FB.temp.flow <- lmer(log(abs_val_k_fine) ~ fb_mg_per_gAFDM.cent + one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=merged_lb_erg_temp_flow)
+summary(model.FB.temp.flow)
+confint(model.FB.temp.flow, level=0.95)
+#Ea in this model is 0.22
+
+```
+
+
+LMER for FB~temp and K vs. FB
+```{r}
+
+model.fb.vs.temp <- lmer(fb_mg_per_gAFDM ~ mean_temp + mean_flow + (1|stream) + (1|date_dep), data=merged_lb_erg_temp_flow)
+summary(model.fb.vs.temp)
+
+pred.fb.temp <- ggpredict(model.fb.vs.temp, terms="mean_temp")
+
+pred.k.fb <- ggpredict(model.FB.temp.flow, terms="fb_mg_per_gAFDM.cent", back.transform = TRUE)
+
+```
+
+
+Plots - just the FB vs Temp and the breakdown vs. FB
+
+FB v temp
+```{r}
+
+pal.fb <- c("#004949","#009292","#ff6db6","#ffb6db",
+ "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+ "#920000","#924900")
+
+fbvk.plot <- ggplot(merged_lb_erg_temp_flow, aes(x=fb_mg_per_gAFDM, y=abs_val_k_fine))+
+  geom_smooth(method="lm", color="gray13")+
+  geom_point(aes(color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  xlab(expression("Fungal biomass (mg g"^-1*" AFDM)"))+
+  ylab(expression("Breakdown rate (d"^-1*")"))+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title=element_text(size=14))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal.fb, labels = c("Sep-Nov", "Oct-Dec", "Nov-Jan", "Dec-Feb", "Jan-Mar",
+                                              "Feb-Apr", "Mar-May", "Apr-Jun", "May-Jul","Jun-Aug", 
+                                              "Jul-Sep"))+labs(tag="(b)")+
+  theme(plot.tag = element_text(size=20),
+        plot.tag.position = c(0.225, 0.95))
+fbvk.plot
+
+
+fbvtemp.plot <- ggplot(merged_lb_erg_temp_flow, aes(x=mean_temp, y=fb_mg_per_gAFDM))+
+  geom_smooth(method="lm", color="gray13")+
+  geom_point(aes(color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  xlab("Mean deployment temperature (°C)")+
+  ylab(expression("Fungal biomass (mg g"^-1*" AFDM)"))+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title=element_text(size=14))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal.fb, labels = c("Sep-Nov", "Oct-Dec", "Nov-Jan", "Dec-Feb", "Jan-Mar",
+                                              "Feb-Apr", "Mar-May", "Apr-Jun", "May-Jul","Jun-Aug", 
+                                              "Jul-Sep"))+labs(tag="(a)")+
+  theme(plot.tag = element_text(size=20),
+        plot.tag.position = c(0.225, 0.95))
+fbvtemp.plot
+
+```
+
+```{r}
+fb.k.temp.2panel <- fbvtemp.plot/fbvk.plot + plot_layout(guides="collect", widths=unit(c(10.5),c("cm")), heights=unit(c(8,8), c("cm","cm")))
+fb.k.temp.2panel
+```
+
+Export 2-panel plot
+```{r}
+
+jpeg(filename="fb.k.temp.2panel.plot.jpeg", width=17, height=22, units="cm", pointsize=12, bg="white", res=600)
+fb.k.temp.2panel
+dev.off()
+
+```
+
+
+
+
+
+

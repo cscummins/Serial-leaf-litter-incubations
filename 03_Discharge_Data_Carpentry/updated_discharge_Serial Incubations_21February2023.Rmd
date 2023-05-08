@@ -1,0 +1,85 @@
+---
+title: "updated_discharge_Serial Incubations_21February2023"
+author: "Carolyn Cummins"
+date: "2/21/2023"
+output: html_document
+---
+
+```{r}
+
+library(tidyverse)
+library(lubridate)
+
+```
+
+
+Read in the daily discharge data, summarize paired stream data at the daily level, bind paired to landscape
+```{r}
+
+#landscape
+landsc.daily.dis.all <- read.csv("landscape_discharge_all_dailymeans09012017_12312019_updated01March2021_long.csv")
+landsc.daily.dis.all <- landsc.daily.dis.all %>% mutate(date2=mdy(date2))
+
+#paired
+paired.dis.all <- read.csv("CREWS_paireddischarge_all_long_FINAL.csv")
+paired.daily.dis.all <- paired.dis.all %>% group_by(stream,date) %>% summarise(value = mean(discharge_ls, na.rm=T))
+paired.daily.dis.all <- paired.daily.dis.all %>% mutate(date=ymd(date))
+
+```
+
+
+Filter for just year 1 and just year 2 landscape streams
+```{r}
+
+#landscape year 1 and year 2
+landsc.daily.dis.all.YR1st <- filter(landsc.daily.dis.all, variable %in% c("WS01", "WS02", "WS06", "WS07", "WS08", "WS13", "WS14", "WS18", "WS27", "WS31", "WS32", "WS36"))
+
+landsc.daily.dis.all.YR2st <- filter(landsc.daily.dis.all, variable %in% c("cwcr", "hncr", "lccr", "ushf", "WS09", "WS17", "WS34", "WS37"))
+
+```
+
+
+Filter for just year 1 and year 2 dates
+```{r}
+
+landsc.daily.dis.all.YR1 <- filter(landsc.daily.dis.all.YR1st, date2 >= "2017-09-21", date2 <= "2018-09-28")
+landsc.daily.dis.all.YR2 <- filter(landsc.daily.dis.all.YR2st, date2>="2018-08-31", date2 <= "2019-08-30")
+
+paired.daily.dis.all.YR2 <- filter(paired.daily.dis.all, date>="2018-08-31", date <= "2019-08-30")
+
+```
+
+
+Fix lowercase PT streams and paired streams, make them capital letters :)
+Make all the column names the same, make them make sense.
+```{r}
+
+landsc.daily.dis.all.YR2$variable <- toupper(landsc.daily.dis.all.YR2$variable)
+paired.daily.dis.all.YR2$stream <- toupper(paired.daily.dis.all.YR2$stream)
+
+colnames(landsc.daily.dis.all.YR1)[colnames(landsc.daily.dis.all.YR1)=="date2"] <- "date"
+colnames(landsc.daily.dis.all.YR1)[colnames(landsc.daily.dis.all.YR1)=="value"] <- "discharge_ls"
+
+colnames(landsc.daily.dis.all.YR2)[colnames(landsc.daily.dis.all.YR2)=="date2"] <- "date"
+colnames(landsc.daily.dis.all.YR2)[colnames(landsc.daily.dis.all.YR2)=="value"] <- "discharge_ls"
+
+colnames(paired.daily.dis.all.YR2)[colnames(paired.daily.dis.all.YR2)=="stream"] <- "variable"
+colnames(paired.daily.dis.all.YR2)[colnames(paired.daily.dis.all.YR2)=="value"] <- "discharge_ls"
+
+landsc.daily.dis.all.YR1 <- landsc.daily.dis.all.YR1 %>% select(date,variable,discharge_ls)
+landsc.daily.dis.all.YR2 <- landsc.daily.dis.all.YR2 %>% select(date,variable,discharge_ls)
+
+```
+
+
+Append YR2 paired streams data to rest of YR2 streams data, write .csv files
+```{r}
+
+landsc.paired.daily.dis.all.YR2 <- bind_rows(landsc.daily.dis.all.YR2, paired.daily.dis.all.YR2)
+
+write.csv(landsc.daily.dis.all.YR1, "landscape_dailydischarge_masterlong_SIyr1_UPD23Feb23.csv")
+
+write.csv(landsc.paired.daily.dis.all.YR2, "landscape_dailydischarge_masterlong_SIyr2_UPD23Feb23.csv")
+```
+
+
