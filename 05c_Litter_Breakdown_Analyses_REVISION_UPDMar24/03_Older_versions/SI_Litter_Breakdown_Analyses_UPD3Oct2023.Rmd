@@ -1,0 +1,1139 @@
+---
+title: "SI_Litter_Breakdown_Analyses"
+author: "Carolyn Cummins"
+date: "6 Mar 2023"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+Set wd and load packages. MAKE SURE TO CLEAR ENVIRONMENT BEFORE RUNNING THIS AS MANY OBJECTS ARE NAMED THE SAME THING AS PREVIOUS SCRIPTS!
+```{r}
+library(dplyr)
+library(lubridate)
+library(Rmisc)
+library(lme4)
+library(lmerTest)
+library(ggplot2)
+library(viridis)
+library(RColorBrewer)
+library(ggsci)
+library(ggeffects)
+library(scales)
+library(rcartocolor)
+library(patchwork)
+
+Boltz <- (8.617*(10^-5))
+```
+
+
+Read in the data and convert date
+```{r}
+
+all_si_yr1yr2_lb_pc <- read.csv("all_si_lb_phys_chem_yr1_yr2_3Oct2023.csv")
+
+#change date_dep and date_coll to date format
+all_si_yr1yr2_lb_pc <- all_si_yr1yr2_lb_pc %>% mutate(date_dep=ymd(date_dep))
+all_si_yr1yr2_lb_pc <- all_si_yr1yr2_lb_pc %>% mutate(date_coll=ymd(date_coll))
+```
+
+
+In year 1, deployment 2 had 2 different collection dates (and, thus, deployment 4 had 2 different deployment dates) because we got snowed out of some of our field sites and had to come back to finish the deployment/collection a few days later. Thus, there are a slightly different number of "days in record" for different streams in deployments 2 and 4 in year 1. Below, I make a new column called "deployment2", which will differentiates the two different sub-deployments for deployments 2 and 4. Then, I can re-name the sub-deployments "2a", "2b", "4a", and "4b" to just "2" and "4". The "days_in_record" will remain different between the two subdeployments, and it is this number that really matters for calculating breakdown -- this change is mostly to have a "clean" deployment column that we can map onto graph aesthetics later on.
+```{r}
+
+all_si_yr1yr2_lb_pc$deployment2 <- all_si_yr1yr2_lb_pc$deployment #"deployment 2" will be the column that differentiates 2a and 2b & 4a and 4b
+all_si_yr1yr2_lb_pc[all_si_yr1yr2_lb_pc$deployment=="2a","deployment"] <- "2"
+all_si_yr1yr2_lb_pc[all_si_yr1yr2_lb_pc$deployment=="2b","deployment"] <- "2"
+all_si_yr1yr2_lb_pc[all_si_yr1yr2_lb_pc$deployment=="4a","deployment"] <- "4"
+all_si_yr1yr2_lb_pc[all_si_yr1yr2_lb_pc$deployment=="4b","deployment"] <- "4"
+all_si_yr1yr2_lb_pc$deployment <- as.numeric(all_si_yr1yr2_lb_pc$deployment)
+
+```
+
+
+Create a long version of the data
+In this version, I'm going to leave nutrients out of the long df that we use for the models since we ultimately decided not to put nutrients in the models since they were not a significant predictor in any of the early iterations of our models.
+```{r}
+
+#coarse
+all_si_yr1yr2_lb_pc.coarse <- all_si_yr1yr2_lb_pc %>% select(date_dep, date_coll, deployment, deployment2, days_in_record, stream, rhodo_acer,
+                                                             mean_k_coarse, sd_k_coarse, se_k_coarse, ci_k_coarse, N_coarse,
+                                                             mean_temp, sd_temp, mean_flow, sd_flow)
+all_si_yr1yr2_lb_pc.coarse$Type <- "Coarse"
+
+colnames(all_si_yr1yr2_lb_pc.coarse)[colnames(all_si_yr1yr2_lb_pc.coarse)=="mean_k_coarse"]<-"mean_k"
+colnames(all_si_yr1yr2_lb_pc.coarse)[colnames(all_si_yr1yr2_lb_pc.coarse)=="sd_k_coarse"]<-"sd_k"
+colnames(all_si_yr1yr2_lb_pc.coarse)[colnames(all_si_yr1yr2_lb_pc.coarse)=="se_k_coarse"]<-"se_k"
+colnames(all_si_yr1yr2_lb_pc.coarse)[colnames(all_si_yr1yr2_lb_pc.coarse)=="ci_k_coarse"]<-"ci_k"
+colnames(all_si_yr1yr2_lb_pc.coarse)[colnames(all_si_yr1yr2_lb_pc.coarse)=="N_coarse"] <- "bag_n"
+
+
+#fine
+all_si_yr1yr2_lb_pc.fine <- all_si_yr1yr2_lb_pc %>% select(date_dep, date_coll, deployment, deployment2, days_in_record, stream, rhodo_acer,
+                                                             mean_k_fine, sd_k_fine, se_k_fine, ci_k_fine, N_fine,
+                                                             mean_temp, sd_temp, mean_flow, sd_flow)
+all_si_yr1yr2_lb_pc.fine$Type <- "Microbes"
+colnames(all_si_yr1yr2_lb_pc.fine)[colnames(all_si_yr1yr2_lb_pc.fine)=="mean_k_fine"]<-"mean_k"
+colnames(all_si_yr1yr2_lb_pc.fine)[colnames(all_si_yr1yr2_lb_pc.fine)=="sd_k_fine"]<-"sd_k"
+colnames(all_si_yr1yr2_lb_pc.fine)[colnames(all_si_yr1yr2_lb_pc.fine)=="se_k_fine"]<-"se_k"
+colnames(all_si_yr1yr2_lb_pc.fine)[colnames(all_si_yr1yr2_lb_pc.fine)=="ci_k_fine"]<-"ci_k"
+colnames(all_si_yr1yr2_lb_pc.fine)[colnames(all_si_yr1yr2_lb_pc.fine)=="N_fine"] <- "bag_n"
+
+
+#shredders - coarse-fine
+all_si_yr1yr2_lb_pc.shred <- all_si_yr1yr2_lb_pc %>% select(date_dep, date_coll, deployment, deployment2, days_in_record, stream, rhodo_acer,
+                                                             mean_k_shred, sd_k_shred, se_k_shred, ci_k_shred, N_shred,
+                                                             mean_temp, sd_temp, mean_flow, sd_flow)
+all_si_yr1yr2_lb_pc.shred$Type <- "Shredders"
+colnames(all_si_yr1yr2_lb_pc.shred)[colnames(all_si_yr1yr2_lb_pc.shred)=="mean_k_shred"]<-"mean_k"
+colnames(all_si_yr1yr2_lb_pc.shred)[colnames(all_si_yr1yr2_lb_pc.shred)=="sd_k_shred"]<-"sd_k"
+colnames(all_si_yr1yr2_lb_pc.shred)[colnames(all_si_yr1yr2_lb_pc.shred)=="se_k_shred"]<-"se_k"
+colnames(all_si_yr1yr2_lb_pc.shred)[colnames(all_si_yr1yr2_lb_pc.shred)=="ci_k_shred"]<-"ci_k"
+colnames(all_si_yr1yr2_lb_pc.shred)[colnames(all_si_yr1yr2_lb_pc.shred)=="N_shred"] <- "bag_n"
+
+
+#shredders - Lecerf
+all_si_yr1yr2_lb_pc.shred_new <- all_si_yr1yr2_lb_pc %>%  select(date_dep, date_coll, deployment, deployment2, days_in_record, stream, rhodo_acer,
+                                                             mean_k_shred_new, sd_k_shred_new, se_k_shred_new, ci_k_shred_new, N_shred_new,
+                                                             mean_temp, sd_temp, mean_flow, sd_flow)
+all_si_yr1yr2_lb_pc.shred_new$Type <- "Shredder_new"
+colnames(all_si_yr1yr2_lb_pc.shred_new)[colnames(all_si_yr1yr2_lb_pc.shred_new)=="mean_k_shred_new"]<-"mean_k"
+colnames(all_si_yr1yr2_lb_pc.shred_new)[colnames(all_si_yr1yr2_lb_pc.shred_new)=="sd_k_shred_new"]<-"sd_k"
+colnames(all_si_yr1yr2_lb_pc.shred_new)[colnames(all_si_yr1yr2_lb_pc.shred_new)=="se_k_shred_new"]<-"se_k"
+colnames(all_si_yr1yr2_lb_pc.shred_new)[colnames(all_si_yr1yr2_lb_pc.shred_new)=="ci_k_shred_new"]<-"ci_k"
+colnames(all_si_yr1yr2_lb_pc.shred_new)[colnames(all_si_yr1yr2_lb_pc.shred_new)=="N_shred_new"] <- "bag_n"
+
+
+#bind all the data together
+all_si_lb_pc_yr1yr2_k.long <- bind_rows(all_si_yr1yr2_lb_pc.coarse, all_si_yr1yr2_lb_pc.fine, all_si_yr1yr2_lb_pc.shred, all_si_yr1yr2_lb_pc.shred_new)
+
+```
+
+Add the rest of the MTE calculations into the long dataframe -- 1/kT and ln(k)
+```{r}
+
+all_si_lb_pc_yr1yr2_k.long$mean_temp_kel<-(all_si_lb_pc_yr1yr2_k.long$mean_temp)+273.15
+all_si_lb_pc_yr1yr2_k.long$one.k.T<-(1/((all_si_lb_pc_yr1yr2_k.long$mean_temp_kel)*Boltz))
+
+#ln of the mean k values
+all_si_lb_pc_yr1yr2_k.long$ln_mean_k <- (log(all_si_lb_pc_yr1yr2_k.long$mean_k))
+
+```
+
+
+
+Subsetting - take out all observations for which there are less than 3 bags contributing to the mean k for coarse, fine, shredder, and shredder_new ; take out pine watersheds (WS01 in yr 1, WS17 in yr2); remove NA and Inf
+```{r}
+
+#bag_n - 2016 -> 1856
+all_si_lb_pc_yr1yr2_k.long <- all_si_lb_pc_yr1yr2_k.long %>% filter(bag_n>2)
+
+#Pine watersheds (YR1 = WS01; YR2 = WS17) -- 1856 -> 1684
+all_si_lb_pc_yr1yr2_k.long <- all_si_lb_pc_yr1yr2_k.long %>% filter(!stream %in% c("WS01", "WS17"))
+
+#Inf, NA, NaN - 1684 -> 1588
+all_si_lb_pc_yr1yr2_k.long <- all_si_lb_pc_yr1yr2_k.long %>% filter(!ln_mean_k %in% c("Inf", "NaN", "NA"))
+
+#Total n after taking out these values = 1588
+
+```
+
+
+
+Re-split the big, long df into subsets for each category - shredders, microbes, rhodo, and acer
+```{r}
+
+#subset by "Type" -- coarse, microbes, shredders (c-f and lecerf)
+
+#coarse:
+all_coarse_mte <- all_si_lb_pc_yr1yr2_k.long %>% filter(Type=="Coarse")
+
+#fine (microbes)
+all_microbes_mte <- all_si_lb_pc_yr1yr2_k.long %>% filter(Type=="Microbes")
+
+#Shredders: coarse-fine (referred to as shredder_old in previous versions of this script)
+all_shredder_c.f_mte <- all_si_lb_pc_yr1yr2_k.long %>% filter(Type=="Shredders")
+
+#Shredders: Lecerf (referred to as shredder_new in previous versions of this script)
+all_shredder_lecerf_mte <- all_si_lb_pc_yr1yr2_k.long %>% filter(Type=="Shredder_new")
+
+#subset by rhodo/acer
+
+#First, need to create a dataframe that does not include coarse or "old" (coarse-fine) shredder estimates so that we can subset the rhodo/acer data based on just shredders and microbes. These rhodo/acer data subsets contain the NEW shredder k estimates based on Lecerf.
+
+all_smra_mte_newshred <- all_si_lb_pc_yr1yr2_k.long %>% filter(!Type %in% c("Coarse", "Shredders"))
+
+#rhodo - new shredders/microbes
+all_rhodo_mte <- all_smra_mte_newshred %>% filter(rhodo_acer=="R")
+
+#acer - new shredders/microbes
+all_acer_mte <- all_smra_mte_newshred %>% filter(rhodo_acer=="A")
+
+```
+
+
+Split the dfs further into 1 df per category - shredder Acer, shredder Rhodo, microbe Acer, microbe Rhodo
+```{r}
+
+acer_shredders <- all_acer_mte %>% filter(Type=="Shredder_new")
+acer_microbes <- all_acer_mte %>% filter(Type=="Microbes")
+
+rhodo_shredders <- all_rhodo_mte %>% filter(Type=="Shredder_new")
+rhodo_microbes <- all_rhodo_mte %>% filter(Type=="Microbes")
+
+acer_coarse <- all_coarse_mte %>% filter(rhodo_acer=="A")
+rhodo_coarse <- all_coarse_mte %>% filter(rhodo_acer=="R")
+
+```
+
+
+
+Standardize predictors for each df separately:
+A. Coarse mesh
+```{r}
+
+mean.one.k.T_coarse_mte <- mean(all_coarse_mte$one.k.T)
+sd.one.k.T_coarse_mte <- sd(all_coarse_mte$one.k.T)
+#
+meanflow_coarse_mte <- mean(all_coarse_mte$mean_flow)
+sdflow_coarse_mte <- sd(all_coarse_mte$mean_flow)
+
+#Add standardized calculations into df
+all_coarse_mte$one.k.T.st <- ((all_coarse_mte$one.k.T - mean.one.k.T_coarse_mte)/sd.one.k.T_coarse_mte)
+all_coarse_mte$mean_flow_st <- ((all_coarse_mte$mean_flow - meanflow_coarse_mte)/sdflow_coarse_mte)
+all_coarse_mte$one.k.T.cent <- (all_coarse_mte$one.k.T - mean.one.k.T_coarse_mte)
+
+```
+
+
+B. New Shredders - this will be used in the analyses (Lecerf et al. 2017)
+```{r}
+
+mean.one.k.T_shredder_lecerf_mte <- mean(all_shredder_lecerf_mte$one.k.T)
+sd.one.k.T_shredder_lecerf_mte <- sd(all_shredder_lecerf_mte$one.k.T)
+#
+meanflow_shredder_lecerf_mte <- mean(all_shredder_lecerf_mte$mean_flow)
+sdflow_shredder_lecerf_mte <- sd(all_shredder_lecerf_mte$mean_flow)
+
+#Add standardized calculations into dfs
+all_shredder_lecerf_mte$one.k.T.st <- ((all_shredder_lecerf_mte$one.k.T - mean.one.k.T_shredder_lecerf_mte)/sd.one.k.T_shredder_lecerf_mte)
+all_shredder_lecerf_mte$mean_flow_st <- ((all_shredder_lecerf_mte$mean_flow - meanflow_shredder_lecerf_mte)/sdflow_shredder_lecerf_mte)
+all_shredder_lecerf_mte$one.k.T.cent <- (all_shredder_lecerf_mte$one.k.T - mean.one.k.T_shredder_lecerf_mte)
+```
+
+
+C. Microbes
+```{r}
+
+mean.one.k.T_microbes_mte <- mean(all_microbes_mte$one.k.T)
+sd.one.k.T_microbes_mte <- sd(all_microbes_mte$one.k.T)
+#
+meanflow_microbes_mte <- mean(all_microbes_mte$mean_flow)
+sdflow_microbes_mte <- sd(all_microbes_mte$mean_flow)
+
+#Add standardized calculations into dfs
+all_microbes_mte$one.k.T.st <- ((all_microbes_mte$one.k.T - mean.one.k.T_microbes_mte)/sd.one.k.T_microbes_mte)
+all_microbes_mte$mean_flow_st <- ((all_microbes_mte$mean_flow - meanflow_microbes_mte)/sdflow_microbes_mte)
+all_microbes_mte$one.k.T.cent <- (all_microbes_mte$one.k.T - mean.one.k.T_microbes_mte)
+
+```
+
+
+D. Acer - (reminder: in this df, only the new way of calculating shredders is included)
+```{r}
+
+mean.one.k.T_acer_mte <- mean(all_acer_mte$one.k.T)
+sd.one.k.T_acer_mte <- sd(all_acer_mte$one.k.T)
+#
+meanflow_acer_mte <- mean(all_acer_mte$mean_flow)
+sdflow_acer_mte <- sd(all_acer_mte$mean_flow)
+
+#Add standardized calculations into df - acer
+all_acer_mte$one.k.T.st <- ((all_acer_mte$one.k.T - mean.one.k.T_acer_mte)/sd.one.k.T_acer_mte)
+all_acer_mte$mean_flow_st <- ((all_acer_mte$mean_flow - meanflow_acer_mte)/sdflow_acer_mte)
+all_acer_mte$one.k.T.cent <- (all_acer_mte$one.k.T - mean.one.k.T_acer_mte)
+
+```
+
+
+E. Rhodo  - (reminder: in this df, only the new way of calculating shredders is included)
+```{r}
+
+mean.one.k.T_rhodo_mte <- mean(all_rhodo_mte$one.k.T)
+sd.one.k.T_rhodo_mte <- sd(all_rhodo_mte$one.k.T)
+#
+meanflow_rhodo_mte <- mean(all_rhodo_mte$mean_flow)
+sdflow_rhodo_mte <- sd(all_rhodo_mte$mean_flow)
+
+#Add standardized calculations into df - rhodo
+all_rhodo_mte$one.k.T.st <- ((all_rhodo_mte$one.k.T - mean.one.k.T_rhodo_mte)/sd.one.k.T_rhodo_mte)
+all_rhodo_mte$mean_flow_st <- ((all_rhodo_mte$mean_flow - meanflow_rhodo_mte)/sdflow_rhodo_mte)
+all_rhodo_mte$one.k.T.cent <- (all_rhodo_mte$one.k.T - mean.one.k.T_rhodo_mte)
+
+```
+
+
+F. "Old" shredders - coarse-fine
+```{r}
+
+mean.one.k.T_shredder_c.f_mte <- mean(all_shredder_c.f_mte$one.k.T)
+sd.one.k.T_shredder_c.f_mte <- sd(all_shredder_c.f_mte$one.k.T)
+#
+meanflow_shredder_c.f_mte <- mean(all_shredder_c.f_mte$mean_flow)
+sdflow_shredder_c.f_mte <- sd(all_shredder_c.f_mte$mean_flow)
+
+#Add standardized calculations into df
+all_shredder_c.f_mte$one.k.T.st <- ((all_shredder_c.f_mte$one.k.T - mean.one.k.T_shredder_c.f_mte)/sd.one.k.T_shredder_c.f_mte)
+all_shredder_c.f_mte$mean_flow_st <- ((all_shredder_c.f_mte$mean_flow - meanflow_shredder_c.f_mte)/sdflow_shredder_c.f_mte)
+all_shredder_c.f_mte$one.k.T.cent <- (all_shredder_c.f_mte$one.k.T - mean.one.k.T_shredder_c.f_mte)
+
+```
+
+
+Standardize predictors for the big df (all_smra_mte_newshred - contains all the factor levels we're interested in for the analysis):
+```{r}
+
+all_smra_mte_newshred$one.k.T.cent <- all_smra_mte_newshred$one.k.T - (mean(all_smra_mte_newshred$one.k.T))
+all_smra_mte_newshred$mean_flow_st <- (all_smra_mte_newshred$mean_flow - (mean(all_smra_mte_newshred$mean_flow))) / (sd(all_smra_mte_newshred$mean_flow))
+
+```
+
+
+Standardize predictors for the individual dataframes
+```{r}
+
+#Acer coarse
+mean.one.k.T_Acoarse_mte <- mean(acer_coarse$one.k.T)
+sd.one.k.T_Acoarse_mte <- sd(acer_coarse$one.k.T)
+meanflow_Acoarse_mte <- mean(acer_coarse$mean_flow)
+sdflow_Acoarse_mte <- sd(acer_coarse$mean_flow)
+
+#Add standardized calculations into df
+acer_coarse$one.k.T.st <- ((acer_coarse$one.k.T - mean.one.k.T_Acoarse_mte)/sd.one.k.T_Acoarse_mte)
+acer_coarse$mean_flow_st <- ((acer_coarse$mean_flow - meanflow_Acoarse_mte)/sdflow_Acoarse_mte)
+acer_coarse$one.k.T.cent <- (acer_coarse$one.k.T - mean.one.k.T_Acoarse_mte)
+
+#
+
+#Rhodo coarse
+mean.one.k.T_Rcoarse_mte <- mean(rhodo_coarse$one.k.T)
+sd.one.k.T_Rcoarse_mte <- sd(rhodo_coarse$one.k.T)
+meanflow_Rcoarse_mte <- mean(rhodo_coarse$mean_flow)
+sdflow_Rcoarse_mte <- sd(rhodo_coarse$mean_flow)
+
+#Add standardized calculations into df
+rhodo_coarse$one.k.T.st <- ((rhodo_coarse$one.k.T - mean.one.k.T_Rcoarse_mte)/sd.one.k.T_Rcoarse_mte)
+rhodo_coarse$mean_flow_st <- ((rhodo_coarse$mean_flow - meanflow_Rcoarse_mte)/sdflow_Rcoarse_mte)
+rhodo_coarse$one.k.T.cent <- (rhodo_coarse$one.k.T - mean.one.k.T_Rcoarse_mte)
+
+#
+
+#Acer shredders
+mean.one.k.T_Ashredder_mte <- mean(acer_shredders$one.k.T)
+sd.one.k.T_Ashredder_mte <- sd(acer_shredders$one.k.T)
+meanflow_Ashredder_mte <- mean(acer_shredders$mean_flow)
+sdflow_Ashredder_mte <- sd(acer_shredders$mean_flow)
+
+#Add standardized calculations into df
+acer_shredders$one.k.T.st <- ((acer_shredders$one.k.T - mean.one.k.T_Ashredder_mte)/sd.one.k.T_Ashredder_mte)
+acer_shredders$mean_flow_st <- ((acer_shredders$mean_flow - meanflow_Ashredder_mte)/sdflow_Ashredder_mte)
+acer_shredders$one.k.T.cent <- (acer_shredders$one.k.T - mean.one.k.T_Ashredder_mte)
+
+#
+
+#Acer microbes
+mean.one.k.T_Amicrobe_mte <- mean(acer_microbes$one.k.T)
+sd.one.k.T_Amicrobe_mte <- sd(acer_microbes$one.k.T)
+meanflow_Amicrobe_mte <- mean(acer_microbes$mean_flow)
+sdflow_Amicrobe_mte <- sd(acer_microbes$mean_flow)
+
+#Add standardized calculations into df
+acer_microbes$one.k.T.st <- ((acer_microbes$one.k.T - mean.one.k.T_Amicrobe_mte)/sd.one.k.T_Amicrobe_mte)
+acer_microbes$mean_flow_st <- ((acer_microbes$mean_flow - meanflow_Amicrobe_mte)/sdflow_Amicrobe_mte)
+acer_microbes$one.k.T.cent <- (acer_microbes$one.k.T - mean.one.k.T_Amicrobe_mte)
+
+#
+
+#Rhodo shredders
+mean.one.k.T_Rshredder_mte <- mean(rhodo_shredders$one.k.T)
+sd.one.k.T_Rshredder_mte <- sd(rhodo_shredders$one.k.T)
+meanflow_Rshredder_mte <- mean(rhodo_shredders$mean_flow)
+sdflow_Rshredder_mte <- sd(rhodo_shredders$mean_flow)
+
+#Add standardized calculations into df
+rhodo_shredders$one.k.T.st <- ((rhodo_shredders$one.k.T - mean.one.k.T_Rshredder_mte)/sd.one.k.T_Rshredder_mte)
+rhodo_shredders$mean_flow_st <- ((rhodo_shredders$mean_flow - meanflow_Rshredder_mte)/sdflow_Rshredder_mte)
+rhodo_shredders$one.k.T.cent <- (rhodo_shredders$one.k.T - mean.one.k.T_Rshredder_mte)
+
+#
+
+#Rhodo microbes
+mean.one.k.T_Rmicrobe_mte <- mean(rhodo_microbes$one.k.T)
+sd.one.k.T_Rmicrobe_mte <- sd(rhodo_microbes$one.k.T)
+meanflow_Rmicrobe_mte <- mean(rhodo_microbes$mean_flow)
+sdflow_Rmicrobe_mte <- sd(rhodo_microbes$mean_flow)
+
+#Add standardized calculations into df
+rhodo_microbes$one.k.T.st <- ((rhodo_microbes$one.k.T - mean.one.k.T_Rmicrobe_mte)/sd.one.k.T_Rmicrobe_mte)
+rhodo_microbes$mean_flow_st <- ((rhodo_microbes$mean_flow - meanflow_Rmicrobe_mte)/sdflow_Rmicrobe_mte)
+rhodo_microbes$one.k.T.cent <- (rhodo_microbes$one.k.T - mean.one.k.T_Rmicrobe_mte)
+
+```
+
+
+
+
+
+########################################
+------- start - models & plots -------
+########################################
+
+Models
+
+Below (1-5) are the models split out for the models with interactions (coarse-mesh (R/A), shredders (lecerf way, R/A), microbes (R/A), Rhodo (lecerf shredders/microbes), and Acer (lecerf shredders/microbes)). These models allow us to check the difference in Ea between leaf types/consumer groups.
+
+1. Coarse mesh
+```{r}
+
+coarse_mesh_model <- lmer(log(mean_k) ~ one.k.T.cent*rhodo_acer + mean_flow_st*rhodo_acer + (1|stream) + (1|date_dep), data=all_coarse_mte)
+summary(coarse_mesh_model)
+
+confint(coarse_mesh_model, level=0.95)
+
+#reverse level of R/A to check Rhodo Ea
+all_coarse_mte$rhodo_acer <- as.factor(all_coarse_mte$rhodo_acer)
+all_coarse_mte$rhodo_acer <- factor(all_coarse_mte$rhodo_acer, levels=rev(levels(all_coarse_mte$rhodo_acer)))
+
+```
+
+
+ggpredict - coarse mesh
+```{r}
+
+ggpredict.coarse.model <- ggpredict(coarse_mesh_model, terms=c("one.k.T.cent", "rhodo_acer"), back.transform = TRUE)
+
+```
+
+
+2. Shredders (Lecerf way)
+```{r}
+
+shredder_lecerf_model <- lmer(log(mean_k) ~ one.k.T.cent*rhodo_acer + mean_flow_st*rhodo_acer + (1|stream) + (1|date_dep), data=all_shredder_lecerf_mte)
+summary(shredder_lecerf_model)
+
+confint(shredder_lecerf_model, level=0.95)
+
+all_shredder_lecerf_mte$rhodo_acer <- as.factor(all_shredder_lecerf_mte$rhodo_acer)
+all_shredder_lecerf_mte$rhodo_acer <- factor(all_shredder_lecerf_mte$rhodo_acer, levels=rev(levels(all_shredder_lecerf_mte$rhodo_acer)))
+
+```
+
+
+ggpredict - Lecerf shredders
+```{r}
+
+ggpredict.shredder.lecerf.model <- ggpredict(shredder_lecerf_model, terms=c("one.k.T.cent", "rhodo_acer"), back.transform = TRUE)
+
+```
+
+
+3. Microbes
+```{r}
+
+microbes_model <- lmer(log(mean_k) ~ one.k.T.cent*rhodo_acer + mean_flow_st*rhodo_acer + (1|stream) + (1|date_dep), data=all_microbes_mte)
+summary(microbes_model)
+
+confint(microbes_model, level=0.95)
+
+all_microbes_mte$rhodo_acer <- as.factor(all_microbes_mte$rhodo_acer)
+all_microbes_mte$rhodo_acer <- factor(all_microbes_mte$rhodo_acer, levels=rev(levels(all_microbes_mte$rhodo_acer)))
+
+```
+
+
+ggpredict - microbes
+```{r}
+
+ggpredict.microbe.model <- ggpredict(microbes_model, terms=c("one.k.T.cent", "rhodo_acer"), back.transform = TRUE)
+
+```
+
+
+4. Rhodo
+```{r}
+
+rhodo_model <- lmer(log(mean_k) ~ one.k.T.cent*Type + mean_flow_st*Type + (1|stream) + (1|date_dep), data=all_rhodo_mte)
+summary(rhodo_model)
+
+confint(rhodo_model, level=0.95)
+
+all_rhodo_mte$Type <- as.factor(all_rhodo_mte$Type)
+all_rhodo_mte$Type <- factor(all_rhodo_mte$Type, levels=rev(levels(all_rhodo_mte$Type)))
+
+```
+
+
+ggpredict - Rhodo
+```{r}
+
+ggpredict.rhodo.model <- ggpredict(rhodo_model, terms=c("one.k.T.cent", "Type"), back.transform = TRUE)
+
+```
+
+
+4. Acer
+```{r}
+
+acer_model <- lmer(log(mean_k) ~ one.k.T.cent*Type + mean_flow_st*Type + (1|stream) + (1|date_dep), data=all_acer_mte)
+summary(acer_model)
+
+confint(acer_model, level=0.95)
+
+all_acer_mte$Type <- as.factor(all_acer_mte$Type)
+all_acer_mte$Type <- factor(all_acer_mte$Type, levels=rev(levels(all_acer_mte$Type)))
+
+```
+
+
+ggpredict - Acer
+```{r}
+
+ggpredict.acer.model <- ggpredict(acer_model, terms=c("one.k.T.cent", "Type"), back.transform = TRUE)
+
+```
+
+
+
+Below are the models that give us SE and Ea look for each specific data subset (Acer shredders, Acer microbes, Rhodo shredder, Rhodo microbes)
+These models allow us to get the accurate SE/CI around each slope...
+
+```{r}
+
+acer_coarse_model <- lmer(log(mean_k) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=acer_coarse)
+summary(acer_coarse_model)
+confint(acer_coarse_model, level=0.95)
+pred.acer.coarse <- ggpredict(acer_coarse_model, terms="one.k.T.cent", back.transform=TRUE)
+
+rhodo_coarse_model <- lmer(log(mean_k) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=rhodo_coarse)
+summary(rhodo_coarse_model)
+confint(rhodo_coarse_model, level=0.95)
+pred.rhodo.coarse <- ggpredict(rhodo_coarse_model, terms="one.k.T.cent", back.transform=TRUE)
+
+acer_shredder_model <- lmer(log(mean_k) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=acer_shredders)
+summary(acer_shredder_model)
+confint(acer_shredder_model, level=0.95)
+pred.acer.shred <- ggpredict(acer_shredder_model, terms="one.k.T.cent", back.transform=TRUE)
+
+acer_microbes_model <- lmer(log(mean_k) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=acer_microbes)
+summary(acer_microbes_model)
+confint(acer_microbes_model, level=0.95)
+pred.acer.mic <- ggpredict(acer_microbes_model, terms="one.k.T.cent", back.transform=TRUE)
+
+rhodo_shredder_model <- lmer(log(mean_k) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=rhodo_shredders)
+summary(rhodo_shredder_model)
+confint(rhodo_shredder_model, level=0.95)
+pred.rhodo.shred <- ggpredict(rhodo_shredder_model, terms="one.k.T.cent", back.transform=TRUE)
+
+rhodo_microbes_model <- lmer(log(mean_k) ~ one.k.T.cent + mean_flow_st + (1|stream) + (1|date_dep), data=rhodo_microbes)
+summary(rhodo_microbes_model)
+confint(rhodo_microbes_model, level=0.95)
+pred.rhodo.mic <- ggpredict(rhodo_microbes_model, terms="one.k.T.cent", back.transform=TRUE)
+
+
+```
+
+
+Using pnorm to estimate the probability of an Ea falling between 0.6 and 0.7 for each model 
+```{r}
+
+summary(acer_coarse_model)
+acer_coarse_SD <- 0.08436*(sqrt(209))
+
+#what is the probability that Ea falls between 0.6 and 0.7 given the mean Ea (from the model) and the standard deviation?
+pnorm(0.7, mean=0.52546, sd=acer_coarse_SD, lower.tail=TRUE) - pnorm(0.6, mean=0.52546, sd=acer_coarse_SD, lower.tail=TRUE)
+#0.03253236
+
+##
+
+summary(rhodo_coarse_model)
+rhodo_coarse_SD <- 0.09343*(sqrt(214))
+pnorm(0.7, mean=0.89774, sd=rhodo_coarse_SD, lower.tail=TRUE) - pnorm(0.6, mean=0.89774, sd=rhodo_coarse_SD, lower.tail=TRUE)
+#0.02870706
+
+##
+
+summary(acer_shredder_model)
+acer_shred_SD <- 0.23511*(sqrt(184))
+pnorm(0.7, mean=0.98198, sd=acer_shred_SD, lower.tail=TRUE) - pnorm(0.6, mean=0.98198, sd=acer_shred_SD, lower.tail=TRUE)
+#0.01244112
+
+##
+
+summary(rhodo_shredder_model)
+rhodo_shred_SD <- 0.22269*(sqrt(185))
+pnorm(0.7, mean=1.49767, sd=rhodo_shred_SD, lower.tail=TRUE) - pnorm(0.6, mean=1.49767, sd=rhodo_shred_SD, lower.tail=TRUE)
+#0.01266479
+
+##
+
+summary(acer_microbes_model)
+acer_mic_SD <- 0.03800*(sqrt(217))
+pnorm(0.7, mean=0.28657, sd=acer_mic_SD, lower.tail=TRUE) - pnorm(0.6, mean=0.28657, sd=acer_mic_SD, lower.tail=TRUE)
+#0.05768082
+
+##
+
+summary(rhodo_microbes_model)
+rhodo_mic_SD <- 0.05375*(sqrt(217))
+pnorm(0.7, mean=0.55982, sd=rhodo_mic_SD, lower.tail=TRUE) - pnorm(0.6, mean=0.55982, sd=rhodo_mic_SD, lower.tail=TRUE)
+#0.0500265
+
+```
+
+
+Trying the pnorms a different way (the right way...)
+```{r}
+
+#Acer coarse
+pnorm(0.6, mean=0.53, sd=0.08, lower.tail=FALSE)-pnorm(0.7, mean=0.53, sd=0.08, lower.tail=FALSE)
+#0.17
+
+#Acer detritivores
+pnorm(0.7, mean=0.98, sd=0.24, lower.tail=TRUE)  - pnorm(0.6, mean=0.98, sd=0.24, lower.tail=TRUE)
+#0.06
+
+#Acer microbes
+pnorm(0.6, mean=0.29, sd=0.04, lower.tail=FALSE)  - pnorm(0.7, mean=0.29, sd=0.04, lower.tail=FALSE)
+#4.59e-15 - basically zero
+
+#Rhodo coarse
+pnorm(0.7, mean=0.90, sd=0.09, lower.tail=TRUE)  - pnorm(0.6, mean=0.90, sd=0.09, lower.tail=TRUE)
+#0.01
+
+#Rhodo detritivores
+pnorm(0.7, mean=1.5, sd=0.22, lower.tail=TRUE)  - pnorm(0.6, mean=1.5, sd=0.22, lower.tail=TRUE)
+#0.0001
+
+#Rhodo  microbes
+pnorm(0.6, mean=0.56, sd=0.05, lower.tail=FALSE)  - pnorm(0.7, mean=0.56, sd=0.05, lower.tail=FALSE)
+#0.21
+
+```
+
+
+
+#####
+
+
+
+Plots!
+```{r}
+pal <- c("#004949","#009292","#ff6db6","#ffb6db",
+ "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+ "#920000","#924900","#db6d00")
+```
+
+
+Coarse R/A
+```{r}
+
+pred.rhodo.coarse$rhodo_acer <- "R"
+pred.acer.coarse$rhodo_acer <- "A"
+pred.acer.pred.rhodo.coarse <- rbind(pred.rhodo.coarse, pred.acer.coarse)
+
+coarse.plot <- ggplot(pred.acer.pred.rhodo.coarse)+
+  geom_line(aes(x=x, y=predicted, linetype=rhodo_acer))+
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, shape=rhodo_acer), alpha = 0.25)+
+  geom_point(data=all_coarse_mte, aes(x=one.k.T.cent, y = mean_k, shape=rhodo_acer, color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  ylab(expression("Breakdown rate (d"^-1*")"))+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal,
+                     labels = c("Sep-Nov","Oct-Dec","Nov-Jan","Dec-Feb","Jan-Mar","Feb-Apr","Mar-May",
+                                "Apr-Jun", "May-Jul","Jun-Aug","Jul-Sep","Aug-Oct"))+
+  scale_linetype_manual(values = c("solid", "dotted"),
+  labels=c(expression(paste(italic("Acer"))), expression(paste(italic("Rhododendron")))))+
+  scale_shape_manual(values = c(16, 17), 
+  labels=c(expression(paste(italic("Acer"))),expression(paste(italic("Rhododendron")))))+
+  labs(tag="(a) Coarse mesh")+theme(plot.tag=element_text(size=16), plot.tag.position=c(0.37, 0.79))+
+  scale_x_reverse(sec.axis=sec_axis(~((1/(Boltz*(.+mean.one.k.T_coarse_mte)))-273.15),name = "Temperature (°C)"),
+                  name=NULL,breaks=NULL, label=NULL)+
+    scale_y_continuous(trans="log", limits = c(0.00001, 0.1), breaks = c(0.00001, 0.0001, 0.001, 0.01, 0.1), 
+                       labels=c("0.00001", "0.0001", "0.001", "0.01", "0.1"))+
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x.top=element_text(margin=margin(b=10)))+
+  theme(legend.text.align=0)
+
+
+coarse.plot
+
+```
+
+
+Shredders R/A
+```{r}
+
+pred.acer.shred$rhodo_acer <- "A"
+pred.rhodo.shred$rhodo_acer <- "R"
+pred.acer.shred$Type <- "Shredder_new"
+pred.rhodo.shred$Type <- "Shredder_new"
+pred.acer.pred.rhodo.shred <- rbind(pred.rhodo.shred, pred.acer.shred)
+
+shredder.plot <- ggplot(pred.acer.pred.rhodo.shred)+
+  geom_line(aes(x=x, y=predicted, linetype=rhodo_acer))+
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, shape=rhodo_acer), alpha = 0.25)+
+  geom_point(data=all_shredder_lecerf_mte, aes(x=one.k.T.cent, y = mean_k, shape=rhodo_acer, color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  ylab(expression("Breakdown rate (d"^-1*")"))+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title.x = element_blank())+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal,
+                     labels = c("Sep-Nov","Oct-Dec","Nov-Jan","Dec-Feb","Jan-Mar","Feb-Apr",
+                                "Mar-May","Apr-Jun","May-Jul","Jun-Aug","Jul-Sep","Aug-Oct"))+
+  scale_linetype_manual(values = c("solid", "dotted"),
+  labels=c(expression(paste(italic("Acer"))), expression(paste(italic("Rhododendron")))))+
+  scale_shape_manual(values = c(16, 17), 
+  labels=c(expression(paste(italic("Acer"))),expression(paste(italic("Rhododendron")))))+
+  labs(tag="(b) Detritivores")+theme(plot.tag=element_text(size=16), plot.tag.position=c(0.36, 0.93))+
+  scale_x_reverse(sec.axis=sec_axis(~((1/(Boltz*(.+mean.one.k.T_shredder_lecerf_mte)))-273.15),
+                  name = NULL, labels=NULL, breaks=NULL), breaks=NULL, labels=NULL)+
+    scale_y_continuous(trans="log", limits = c(0.00001, 0.1), breaks = c(0.00001, 0.0001, 0.001, 0.01, 0.1), 
+                       labels=c("0.00001", "0.0001", "0.001", "0.01", "0.1"))+
+  theme(axis.title.y=element_text(margin=margin(r=40)))+
+  theme(legend.text.align=0)
+
+
+shredder.plot
+
+```
+
+
+Microbes R/A
+```{r}
+
+pred.acer.mic$rhodo_acer <- "A"
+pred.rhodo.mic$rhodo_acer <- "R"
+pred.acer.mic$Type <- "Microbes"
+pred.rhodo.mic$Type <- "Microbes"
+pred.acer.pred.rhodo.mic <- rbind(pred.rhodo.mic, pred.acer.mic)
+
+mic.plot <- ggplot(pred.acer.pred.rhodo.mic)+
+  geom_line(aes(x=x, y=predicted, linetype=rhodo_acer))+
+  geom_ribbon(aes(x = x, ymin = conf.low, ymax = conf.high, shape=rhodo_acer), alpha = 0.25)+
+  geom_point(data=all_microbes_mte, aes(x=one.k.T.cent, y = mean_k, shape=rhodo_acer, color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal,
+                     labels = c("Sep-Nov","Oct-Dec","Nov-Jan","Dec-Feb","Jan-Mar","Feb-Apr","Mar-May",
+                                "Apr-Jun","May-Jul","Jun-Aug","Jul-Sep","Aug-Oct"))+
+  scale_linetype_manual(values = c("solid", "dotted"),
+  labels=c(expression(paste(italic("Acer"))), expression(paste(italic("Rhododendron")))))+
+  scale_shape_manual(values = c(16, 17), 
+  labels=c(expression(paste(italic("Acer"))),expression(paste(italic("Rhododendron")))))+
+  labs(tag="(c) Microbes")+theme(plot.tag=element_text(size=16), plot.tag.position=c(0.34, 0.93))+
+  scale_x_reverse(sec.axis=sec_axis(~((1/(Boltz*(.+mean.one.k.T_microbes_mte)))-273.15),name = NULL, labels=NULL, breaks=NULL),
+                  name=expression("1/(k"[B]*"T) - 1/(k"[B]*"T"[0]*")", breaks=c(-1,0,1)))+
+    scale_y_continuous(trans="log", limits = c(0.00001, 0.1), breaks = c(0.00001, 0.0001, 0.001, 0.01, 0.1), 
+                       labels=c("0.00001", "0.0001", "0.001", "0.01", "0.1"))+
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x=element_text(margin=margin(t=10)))+
+  theme(legend.text.align=0)
+
+mic.plot
+
+```
+
+
+Make it a 3-panel, stacked figure
+```{r}
+
+c.s.m.3panel.vplot <- coarse.plot/shredder.plot/mic.plot + plot_layout(guides="collect", widths=unit(c(10.5),c("cm")), heights=unit(c(8,8,8), c("cm","cm","cm")))
+c.s.m.3panel.vplot
+
+```
+
+
+Acer shredder/microbe
+```{r}
+
+pred.shredder.pred.microbe.acer <-rbind(pred.acer.shred, pred.acer.mic)
+
+acer.plot <- ggplot(pred.shredder.pred.microbe.acer)+
+  geom_line(aes(x=x, y=predicted, linetype=Type))+
+  geom_ribbon(aes(x=x, ymin=conf.low, ymax=conf.high, shape=Type), alpha = 0.25)+
+  geom_point(data=all_acer_mte, aes(x=one.k.T.cent, y=mean_k, shape=Type, color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal,
+                     labels = c("Sep-Nov","Oct-Dec","Nov-Jan","Dec-Feb","Jan-Mar","Feb-Apr","Mar-May",
+                                "Apr-Jun", "May-Jul","Jun-Aug","Jul-Sep","Aug-Oct"))+
+  scale_linetype_manual(values = c("solid", "dotted"),
+  labels=c("Microbes", "Detritivores"))+
+  scale_shape_manual(values = c(16, 17), 
+  labels=c("Microbes", "Detritivores"))+
+  labs(tag=expression('(a) '*italic(Acer)*''))+theme(plot.tag=element_text(size=16), plot.tag.position=c(0.2, 0.8))+
+  scale_x_reverse(sec.axis=sec_axis(~((1/(Boltz*(.+mean.one.k.T_acer_mte)))-273.15), name = "Temperature (°C)"), breaks=c(-1, 0, 1))+
+    scale_y_continuous(trans="log", limits = c(0.00001, 0.1), breaks = c(0.00001, 0.0001, 0.001, 0.01, 0.1), 
+                       labels=c("0.00001", "0.0001", "0.001", "0.01", "0.1"), 
+                     name=expression("Breakdown rate (d"^-1*")"))+
+  theme(axis.title.x.top=element_text(margin=margin(b=10)))+
+  theme(axis.title.y=element_text(margin=margin(t=600)))+
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x.bottom = element_blank())+
+  theme(axis.text.x.bottom = element_blank())+
+  theme(axis.ticks.x.bottom = element_blank())
+
+acer.plot
+
+```
+
+
+Rhodo shredder/microbe
+```{r}
+
+pred.shredder.pred.microbe.rhodo <-rbind(pred.rhodo.shred, pred.rhodo.mic)
+
+
+rhodo.plot <-ggplot(pred.shredder.pred.microbe.rhodo)+
+  geom_line(aes(x=x, y=predicted, linetype=Type))+
+  geom_ribbon(aes(x=x, ymin=conf.low, ymax=conf.high, shape=Type), alpha = 0.25)+
+  geom_point(data=all_rhodo_mte, aes(x=one.k.T.cent, y=mean_k, shape=Type, color=as.factor(deployment)))+
+  theme_classic()+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=14))+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_color_manual(values = pal,labels = c("Sep-Nov","Oct-Dec","Nov-Jan","Dec-Feb","Jan-Mar","Feb-Apr","Mar-May",
+                                             "Apr-Jun","May-Jul","Jun-Aug","Jul-Sep","Aug-Oct"))+
+  scale_linetype_manual(values = c("solid", "dotted"),
+  labels=c("Microbes", "Detritivores"))+
+  scale_shape_manual(values = c(16, 17), 
+  labels=c("Microbes", "Detritivores"))+
+  labs(tag=expression('(b) '*italic(Rhododendron)*''))+theme(plot.tag=element_text(size=16), plot.tag.position=c(0.3, 0.93))+ 
+  scale_x_reverse(sec.axis=sec_axis(~((1/(Boltz*(.+mean.one.k.T_rhodo_mte)))-273.15),name = NULL, labels=NULL, breaks=NULL),
+                  name=expression("1/(k"[B]*"T) - 1/(k"[B]*"T"[0]*")", breaks=c(-1,0,1)))+
+    scale_y_continuous(trans="log", limits = c(0.00001, 0.1), breaks = c(0.00001, 0.0001, 0.001, 0.01, 0.1), 
+                       labels=c("0.00001", "0.0001", "0.001", "0.01", "0.1"), 
+                     name=expression("Breakdown rate (d"^-1*")"))+
+  theme(axis.title.x=element_text(margin=margin(t=10)))+
+  theme(axis.title.y=element_blank())
+
+
+rhodo.plot
+
+```
+
+
+
+```{r}
+
+acer.rhodo.plot <- acer.plot/rhodo.plot + plot_layout(guides="collect", widths=unit(c(10.5),c("cm")), heights=unit(c(8,8), c("cm","cm")))
+acer.rhodo.plot
+
+```
+
+
+Print the vertical, multipanel figures
+```{r}
+
+#jpeg(filename="c.s.m.3panel.vplot.jpeg", width=25, height=31, units="cm", pointsize=12, bg="white", res=600)
+#c.s.m.3panel.vplot
+#dev.off()
+
+#jpeg(filename="acer.rhodo.2panel.vplot.jpeg", width=17, height=22, units="cm", pointsize=12, bg="white", res=600)
+#acer.rhodo.plot
+#dev.off()
+
+
+```
+
+
+Shredder c-f vs. lecerf test
+```{r}
+
+shredk.c.f <- all_shredder_c.f_mte %>% select(date_dep, date_coll, stream, mean_k, rhodo_acer)
+colnames(shredk.c.f)[colnames(shredk.c.f)=="mean_k"]<-"shredk.c.f"
+
+shredk.lec <- all_shredder_lecerf_mte %>% select(date_dep, date_coll, stream, mean_k, rhodo_acer)
+colnames(shredk.lec)[colnames(shredk.lec)=="mean_k"]<-"shredk.lec"
+
+shredder.compare <- full_join(shredk.c.f, shredk.lec)
+
+shredder.compare.model <- lm(shredk.lec~shredk.c.f, data=shredder.compare)
+summary(shredder.compare.model)
+
+plot.shredder.compare <- ggplot(shredder.compare, aes(x=shredk.c.f, y=shredk.lec)) + theme_classic() + geom_smooth(method="lm") + geom_point()
+plot.shredder.compare
+#lecerf shredder is about 0.6 of coarse-fine estimate.
+
+```
+
+
+#####
+
+
+Absolute vs. relative increases in k - illustrating patterns by calculating k at 10C and 14C
+```{r}
+#this function calculates k at a given temperature in degrees celsius based on our model Ea values, centered 1/kT values, and intercepts (lnk0)
+
+k_val_fun <- function(lnk0, B=(8.617*(10^-5)), tempcel, one.k.t0, Ea){
+  kval <- exp(lnk0 + (((1/(B*(tempcel+273.15)))-one.k.t0)*Ea))
+  return(kval)
+}
+
+Rmic.k10 <- k_val_fun(lnk0=-5.59561, tempcel=10, one.k.t0 = 40.69, Ea=-0.56)
+Rmic.k12 <- k_val_fun(lnk0=-5.59561, tempcel=12, one.k.t0 = 40.69, Ea=-0.56)
+Rmic.k14 <- k_val_fun(lnk0=-5.59561, tempcel=14, one.k.t0 = 40.69, Ea=-0.56)
+Rmic.k16 <- k_val_fun(lnk0=-5.59561, tempcel=16, one.k.t0 = 40.69, Ea=-0.56)
+
+Rsh.k10 <- k_val_fun(lnk0=-6.75632, tempcel=10, one.k.t0=40.64, Ea=-1.5)
+Rsh.k12 <- k_val_fun(lnk0=-6.75632, tempcel=12, one.k.t0=40.64, Ea=-1.5)
+Rsh.k14 <- k_val_fun(lnk0=-6.75632, tempcel=14, one.k.t0=40.64, Ea=-1.5)
+Rsh.k16 <- k_val_fun(lnk0=-6.75632, tempcel=16, one.k.t0=40.64, Ea=-1.5)
+
+Amic.k10 <- k_val_fun(lnk0=-4.36613, tempcel=10, one.k.t0=40.69, Ea=-0.29)
+Amic.k12 <- k_val_fun(lnk0=-4.36613, tempcel=12, one.k.t0=40.69, Ea=-0.29)
+Amic.k14 <- k_val_fun(lnk0=-4.36613, tempcel=14, one.k.t0=40.69, Ea=-0.29)
+Amic.k16 <- k_val_fun(lnk0=-4.36613, tempcel=16, one.k.t0=40.69, Ea=-0.29)
+
+Ash.k10 <- k_val_fun(lnk0=-5.29732, tempcel=10, one.k.t0=40.64, Ea=-0.98)
+Ash.k12 <- k_val_fun(lnk0=-5.29732, tempcel=12, one.k.t0=40.64, Ea=-0.98)
+Ash.k14 <- k_val_fun(lnk0=-5.29732, tempcel=14, one.k.t0=40.64, Ea=-0.98)
+Ash.k16 <- k_val_fun(lnk0=-5.29732, tempcel=16, one.k.t0=40.64, Ea=-0.98)
+
+```
+
+###
+Plots for relative vs. absolute 4-panel
+
+Barplot of Ea values - Ea's here are parameter estiamates from individual models
+```{r}
+
+consumer <- c("Microbes","Detritivores","Microbes", "Detritivores")
+leaf <- c("R", "R" , "A", "A")
+
+Ea.mic.R <- 0.56
+Ea.det.R <- 1.5
+Ea.mic.A <- 0.29
+Ea.det.A <- 0.98
+
+Ea <- c(Ea.mic.R, Ea.det.R, Ea.mic.A, Ea.det.A)
+
+Ea.data.frame <- data.frame(consumer,leaf,Ea)
+
+rhodo.acer.labels <- c(expression(paste(italic("Acer"))), expression(paste(italic("Rhododendron"))))
+Ea.plot <- ggplot(Ea.data.frame) + 
+  geom_bar(aes(x=as.factor(leaf), y=Ea, fill=consumer), stat='identity', position=position_dodge(preserve='single'))+
+  theme_classic()+
+  scale_fill_manual(values=c("#3D2B56", "#DDB892"))+
+  theme(axis.title.x = element_blank())+
+  theme(axis.text.x = element_blank()) +
+  ylab(expression(paste(italic("E"[a]*""))))+
+  #geom_text(aes(x=as.factor(leaf), y=Ea, label=Ea, group=consumer),position = position_dodge(width = .9), vjust=-0.2, size=5)+
+  theme(legend.title=element_blank())+
+  ylim(0,2)+
+  theme(legend.text=element_text(size=15))+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=15, face="bold"))+scale_x_discrete(labels=rhodo.acer.labels)+
+  labs(tag="(a)")+
+  theme(plot.tag = element_text(size=20),plot.tag.position = c(0.22, 0.93))
+
+Ea.plot
+
+```
+
+Mean and median temperatures
+```{r}
+
+median.rc.tempc <- median(rhodo_coarse$mean_temp)
+median.ac.tempc <- median(acer_coarse$mean_temp)
+median.rs.tempc <- median(rhodo_shredders$mean_temp)
+median.as.tempc <- median(acer_shredders$mean_temp)
+median.rm.tempc <- median(rhodo_microbes$mean_temp)
+median.am.tempc <- median(acer_microbes$mean_temp)
+mean(median.rc.tempc, median.ac.tempc, median.rs.tempc, median.as.tempc, median.rm.tempc, median.am.tempc)
+#11.867
+
+mean.rc.tempc <- mean(rhodo_coarse$mean_temp)
+mean.ac.tempc <- mean(acer_coarse$mean_temp)
+mean.rs.tempc <- mean(rhodo_shredders$mean_temp)
+mean.as.tempc <- mean(acer_shredders$mean_temp)
+mean.rm.tempc <- mean(rhodo_microbes$mean_temp)
+mean.am.tempc <- mean(acer_microbes$mean_temp)
+mean(mean.rc.tempc, mean.ac.tempc, mean.rs.tempc, mean.as.tempc, mean.rm.tempc, mean.am.tempc)
+#12.11
+
+```
+
+Maybe, since 12C seems to be both the mean and median temperature in all our datasets, we should try the absolute and relative calculations at 12 and 16C
+
+###
+Plots for relative vs. absolute 4-panel with 12 and 16C instead
+
+Plot of percent increases in k
+```{r}
+
+percent.increase.12.16.Rmic <- 100*(Rmic.k16-Rmic.k12)/Rmic.k12
+percent.increase.12.16.Amic <- 100*(Amic.k16-Amic.k12)/Amic.k12
+percent.increase.12.16.Rdet <- 100*(Rsh.k16-Rsh.k12)/Rsh.k12
+percent.increase.12.16.Adet <- 100*(Ash.k16-Ash.k12)/Ash.k12
+
+perc.inc.k.12.16 <- c(percent.increase.12.16.Rmic, percent.increase.12.16.Rdet, percent.increase.12.16.Amic, percent.increase.12.16.Adet)
+
+perc.inc.k.df.12.16 <- data.frame(consumer,leaf,perc.inc.k.12.16)
+
+percinc.plot.12.16 <- ggplot(perc.inc.k.df.12.16) + 
+  geom_bar(aes(x=as.factor(leaf), y=perc.inc.k.12.16, fill=consumer), stat='identity', position=position_dodge(preserve='single'))+
+  theme_classic()+
+  scale_fill_manual(values=c("#3D2B56", "#DDB892"))+
+  ylab(expression(atop(paste("Percent increase in ", italic("k"), " (d"^-1*")"), " from 12°C to 16°C")))+
+  #geom_text(aes(x=as.factor(leaf), y=perc.inc.k, label=perc.inc.k, group=consumer),position = position_dodge(width = .9), vjust=-0.2, size=5)+
+  theme(legend.title=element_blank())+
+  ylim(0,150)+
+  theme(legend.text=element_text(size=15))+
+  theme(axis.title=element_text(size=16))+
+  theme(axis.text=element_text(size=15, face="bold"))+
+  labs(tag="(c)")+
+  theme(plot.tag = element_text(size=20),plot.tag.position = c(0.22, 0.93))+
+  xlab("Leaf species")+
+  scale_x_discrete(labels=rhodo.acer.labels)
+
+percinc.plot.12.16
+
+```
+
+```{r}
+
+Rmic.k16-Rmic.k12 #0.00137
+Amic.k16-Amic.k12 #0.00225
+Rsh.k16-Rsh.k12 #0.0014
+Ash.k16-Ash.k12 #0.0035
+
+
+leaf.long <- c("R", "R", "R", "R", "A", "A", "A", "A")
+consumer.long <- c("Microbes", "Microbes", "Detritivores", "Detritivores", "Microbes", "Microbes", "Detritivores", "Detritivores")
+
+k12k16 <- c(Rmic.k12, Rmic.k16, Rsh.k12, Rsh.k16, Amic.k12, Amic.k16, Ash.k12, Ash.k16)
+
+k.inc.df.12.16 <- data.frame(leaf.long, consumer.long, k12k16)
+
+k12k16.plot <- ggplot(k.inc.df.12.16)+ 
+  geom_point(data=k.inc.df.12.16, aes(x=as.factor(leaf.long), y=k12k16, color=as.factor(consumer.long)), position=position_dodge(width=0.8), size=3)+
+  theme_classic()+
+  scale_color_manual(values=c("#3D2B56", "#DDB892"))+
+  ylab(expression(paste(italic("k"), " (d"^-1*")", " at 12°C and 16°C")))+
+  theme(legend.title=element_blank())+
+  ylim(0,0.0155)+
+  theme(legend.text=element_text(size=14))+
+  scale_x_discrete(labels=rhodo.acer.labels) +
+  geom_segment(aes(x = 0.8, y = 0.0051, xend = 0.8, yend = 0.0078),
+               arrow = arrow(length = unit(0.3, "cm")), colour="#3D2B56", linewidth=1)+
+  annotate("text", x=1.0, y=0.0065, label= "+ 0.0035", size=5.5)+
+  geom_segment(aes(x = 1.2, y = 0.0130 , xend = 1.2, yend = 0.0145),
+               arrow = arrow(length = unit(0.3, "cm")), colour="#DDB892", linewidth=1)+
+  annotate("text", x=1.4, y=0.0138, label= "+ 0.0023", size=5.5)+
+  geom_segment(aes(x = 2.2, y = 0.004, xend = 2.2, yend = 0.0047),
+               arrow = arrow(length = unit(0.3, "cm")), colour="#DDB892", linewidth=1)+
+  annotate("text", x=2.42, y=0.00435, label= "+ 0.0014", size=5.5)+
+  geom_segment(aes(x = 1.8, y = 0.0014, xend = 1.8, yend = 0.0021),
+               arrow = arrow(length = unit(0.3, "cm")), colour="#3D2B56", linewidth=1)+
+  annotate("text", x=2.02, y=0.0018, label= "+ 0.0014", size=5.5)+
+  theme(axis.text.y=element_text(size=15, face="bold"))+
+  theme(axis.title.y=element_text(size=16))+
+  theme(axis.title.x=element_text(size=16))+
+  theme(axis.text.x=element_text(size=15))+
+  theme(legend.position="none")+
+  labs(tag="(b)")+
+  theme(plot.tag = element_text(size=20),plot.tag.position = c(0.19, 0.93))+
+  theme(axis.title.x = element_blank())+
+  theme(axis.text.x = element_blank())
+
+k12k16.plot
+
+```
+
+```{r}
+
+absinc.mic.R.12.16 <- Rmic.k16-Rmic.k12 #0.00137
+absinc.det.R.12.16 <- Rsh.k16-Rsh.k12 #0.0014
+absinc.mic.A.12.16 <- Amic.k16-Amic.k12 #0.00225
+absinc.det.A.12.16 <- Ash.k16-Ash.k12 #0.0035
+
+abs.inc.k.12.16 <- c(absinc.mic.R.12.16, absinc.det.R.12.16, absinc.mic.A.12.16, absinc.det.A.12.16)
+
+options(scipen=999)
+
+abs.inc.k.df.12.16 <- data.frame(consumer,leaf,abs.inc.k.12.16)
+abs.inc.k.df.12.16 <- abs.inc.k.df.12.16 %>% mutate(abs.inc.k.rounded = round(abs.inc.k.12.16, digits=4))
+
+absinc.plot.12.16 <- ggplot(abs.inc.k.df.12.16) + 
+  geom_bar(aes(x=as.factor(leaf), y=abs.inc.k.12.16, fill=consumer), stat='identity', position=position_dodge(preserve='single'))+
+  theme_classic()+
+  scale_fill_manual(values=c("#3D2B56", "#DDB892"))+
+  xlab("Leaf species")+
+  ylab(expression(atop(paste("Absolute increase in ", italic("k"), " (d"^-1*")"), " from 12°C to 16°C")))+
+  #geom_text(aes(x=as.factor(leaf), y=abs.inc.k, label=abs.inc.k.rounded, group=consumer),position = position_dodge(width = .9), vjust=-0.2, size=5)+
+  theme(legend.title=element_blank())+
+  ylim(0,0.0040)+
+  theme(legend.text=element_text(size=15))+
+  theme(axis.text.y=element_text(size=15, face="bold"))+
+  theme(axis.title.y=element_text(size=16))+
+  theme(axis.title.x=element_text(size=16))+
+  theme(axis.text.x=element_text(size=15))+
+  scale_x_discrete(labels=rhodo.acer.labels)+
+  labs(tag="(d)")+theme(plot.tag = element_text(size=20),plot.tag.position = c(0.19, 0.93))
+
+absinc.plot.12.16
+
+```
+
+```{r}
+
+rel.abs.4panel.12.16 <- Ea.plot + k12k16.plot + percinc.plot.12.16 + absinc.plot.12.16 + plot_layout(guides="collect", widths=unit(c(14),c("cm")), heights=unit(c(12), c("cm")))
+rel.abs.4panel.12.16
+
+```
+
+```{r}
+
+jpeg(filename="rel.abs.4panel.12.16.jpg", width=40, height=32, units="cm", pointsize=12, bg="white", res=600)
+rel.abs.4panel.12.16
+dev.off()
+
+```
+
+
+Days to 95% mass loss
+```{r}
+
+#first calculate coarse k at 12 and 16
+Rcoarse.k12 <- k_val_fun(lnk0=-5.11962, tempcel=12, one.k.t0 = 40.69, Ea=-0.90)
+Acoarse.k12 <- k_val_fun(lnk0=-3.77282, tempcel=12, one.k.t0 = 40.71, Ea=-0.53)
+
+Rcoarse.k16 <- k_val_fun(lnk0=-5.11962, tempcel=16, one.k.t0 = 40.69, Ea=-0.90)
+Acoarse.k16 <- k_val_fun(lnk0=-3.77282, tempcel=16, one.k.t0 = 40.71, Ea=-0.53)
+
+#days to 95% mass loss
+
+#acer coarse
+a_coarse_daysto95_12 <- log(0.05)/(-Acoarse.k12)
+a_coarse_daysto95_16 <- log(0.05)/(-Acoarse.k16)
+
+#rhodo coarse
+r_coarse_daysto95_12 <- log(0.05)/(-Rcoarse.k12)
+r_coarse_daysto95_16 <- log(0.05)/(-Rcoarse.k16)
+
+```

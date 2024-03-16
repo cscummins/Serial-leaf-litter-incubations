@@ -1,0 +1,366 @@
+---
+title: "Temperature and flow plots and summaries"
+author: "Carolyn Cummins"
+date: "3/7/2023"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(viridis)
+library(RColorBrewer)
+library(ggsci)
+library(ggeffects)
+library(scales)
+library(rcartocolor)
+library(patchwork)
+```
+
+
+Temperature data
+```{r}
+
+temp_yr1 <- read.csv("landscape_deployment_temp_masterlong_SIyr1.csv")
+temp_yr1$X <- NULL
+temp_yr1 <- temp_yr1 %>% mutate(start_date=ymd(start_date))
+temp_yr1 <- temp_yr1 %>% mutate(end_date=ymd(end_date))
+
+
+#Create new temp sheet that only has the correct deployments for each stream for year 1, since some deployments in year 1 were mismatched due to not being able to access streams in Dec 17
+#Streams that correspond to deployment 2a and 4a: WS01, WS02, WS06, WS07, WS08, WS13, WS14, WS18
+#Streams that correspond to deployments 2b and 4b: WS27, WS31, WS32, WS36
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS01" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS02" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS06" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS07" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS08" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS13" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS14" & temp_yr1$deployment=="2b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS18" & temp_yr1$deployment=="2b"),]
+
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS01" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS02" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS06" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS07" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS08" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS13" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS14" & temp_yr1$deployment=="4b"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS18" & temp_yr1$deployment=="4b"),]
+
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS27" & temp_yr1$deployment=="2a"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS31" & temp_yr1$deployment=="2a"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS32" & temp_yr1$deployment=="2a"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS36" & temp_yr1$deployment=="2a"),]
+
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS27" & temp_yr1$deployment=="4a"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS31" & temp_yr1$deployment=="4a"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS32" & temp_yr1$deployment=="4a"),]
+temp_yr1 <- temp_yr1[!(temp_yr1$stream=="WS36" & temp_yr1$deployment=="4a"),]
+
+temp_yr1[temp_yr1$deployment=="2a","deployment"] <- "2"
+temp_yr1[temp_yr1$deployment=="2b","deployment"] <- "2"
+temp_yr1[temp_yr1$deployment=="4a","deployment"] <- "4"
+temp_yr1[temp_yr1$deployment=="4b","deployment"] <- "4"
+
+temp_yr1$deployment <- as.numeric(temp_yr1$deployment)
+
+###################################################################################################################################
+
+temp_yr2 <- read.csv("landscape_deployment_temp_masterlong_SIyr2_UPD23Feb23.csv")
+temp_yr2$X <- NULL
+temp_yr2 <- temp_yr2 %>% mutate(start_date=ymd(start_date))
+temp_yr2 <- temp_yr2 %>% mutate(end_date=ymd(end_date))
+
+```
+
+
+Reading in and cleaning the flow data:
+```{r}
+
+dis_yr1 <- read.csv("landscape_deployment_discharge_masterlong_SIyr1_UPD23Feb23.csv")
+dis_yr1$X <- NULL
+dis_yr1 <- dis_yr1 %>% mutate(start_date=ymd(start_date))
+dis_yr1 <- dis_yr1 %>% mutate(end_date=ymd(end_date))
+
+#Create new discharge sheet that only has the correct deployments for each stream for year 1, since some deployments in year 1 were mismatched due to not being able to access streams in Dec 17
+#Streams that correspond to deployment 2a and 4a: WS01, WS02, WS06, WS07, WS08, WS13, WS14, WS18
+#Streams that correspond to deployments 2b and 4b: WS27, WS31, WS32, WS36
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS01" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS02" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS06" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS07" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS08" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS13" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS14" & dis_yr1$deployment=="2b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS18" & dis_yr1$deployment=="2b"),]
+
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS01" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS02" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS06" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS07" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS08" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS13" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS14" & dis_yr1$deployment=="4b"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS18" & dis_yr1$deployment=="4b"),]
+
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS27" & dis_yr1$deployment=="2a"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS31" & dis_yr1$deployment=="2a"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS32" & dis_yr1$deployment=="2a"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS36" & dis_yr1$deployment=="2a"),]
+
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS27" & dis_yr1$deployment=="4a"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS31" & dis_yr1$deployment=="4a"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS32" & dis_yr1$deployment=="4a"),]
+dis_yr1 <- dis_yr1[!(dis_yr1$stream=="WS36" & dis_yr1$deployment=="4a"),]
+
+dis_yr1[dis_yr1$deployment=="2a","deployment"] <- "2"
+dis_yr1[dis_yr1$deployment=="2b","deployment"] <- "2"
+dis_yr1[dis_yr1$deployment=="4a","deployment"] <- "4"
+dis_yr1[dis_yr1$deployment=="4b","deployment"] <- "4"
+
+dis_yr1$deployment <- as.numeric(dis_yr1$deployment)
+###############################################################################
+dis_yr2 <- read.csv("landscape_deployment_discharge_masterlong_SIyr2_UPD23Feb23.csv")
+dis_yr2$X <- NULL
+dis_yr2 <- dis_yr2 %>% mutate(start_date=ymd(start_date))
+dis_yr2 <- dis_yr2 %>% mutate(end_date=ymd(end_date))
+
+```
+
+
+Nutrients
+```{r}
+nut.yr1 <- read.csv("deployment_nuts_masterlong_SIyr1.csv")
+nut.yr1$X <- NULL
+nut.yr1 <- nut.yr1 %>% mutate(start_date=ymd(start_date))
+nut.yr1 <- nut.yr1 %>% mutate(end_date=ymd(end_date))
+
+#Create new discharge sheet that only has the correct deployments for each stream for year 1, since some deployments in year 1 were mismatched due to not being able to access streams in Dec 17
+#Streams that correspond to deployment 2a and 4a: WS01, WS02, WS06, WS07, WS08, WS13, WS14, WS18
+#Streams that correspond to deployments 2b and 4b: WS27, WS31, WS32, WS36
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS01" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS02" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS06" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS07" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS08" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS13" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS14" & nut.yr1$deployment=="2b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS18" & nut.yr1$deployment=="2b"),]
+
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS01" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS02" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS06" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS07" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS08" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS13" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS14" & nut.yr1$deployment=="4b"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS18" & nut.yr1$deployment=="4b"),]
+
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS27" & nut.yr1$deployment=="2a"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS31" & nut.yr1$deployment=="2a"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS32" & nut.yr1$deployment=="2a"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS36" & nut.yr1$deployment=="2a"),]
+
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS27" & nut.yr1$deployment=="4a"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS31" & nut.yr1$deployment=="4a"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS32" & nut.yr1$deployment=="4a"),]
+nut.yr1 <- nut.yr1[!(nut.yr1$stream=="WS36" & nut.yr1$deployment=="4a"),]
+
+nut.yr1[nut.yr1$deployment=="2a","deployment"] <- "2"
+nut.yr1[nut.yr1$deployment=="2b","deployment"] <- "2"
+nut.yr1[nut.yr1$deployment=="4a","deployment"] <- "4"
+nut.yr1[nut.yr1$deployment=="4b","deployment"] <- "4"
+
+nut.yr1$deployment <- as.numeric(nut.yr1$deployment)
+###############################################################################
+nut.yr2 <- read.csv("deployment_nuts_masterlong_SIyr2_UPD23Feb23.csv")
+nut.yr2$X <- NULL
+nut.yr2 <- nut.yr2 %>% mutate(start_date=ymd(start_date))
+nut.yr2 <- nut.yr2 %>% mutate(end_date=ymd(end_date))
+
+
+#####
+#Eliminate Yr1 streams from YR2 and YR2 streams from YR1
+nut.yr1 <- nut.yr1 %>% filter(!stream %in% c("CWCR", "HNCR", "LCCR", "TOWR", "USHF", "WS09", "WS17", "WS34", "WS37", "WS55"))
+nut.yr2 <- nut.yr2 %>% filter(!stream %in% c("WS01", "WS02", "WS06", "WS07", "WS08", "WS13", "WS14", "WS18", "WS27", "WS31", "WS32", "WS36"))
+
+```
+
+
+
+
+
+#########################################################################################
+
+Multi-panel figures
+
+Temperature
+```{r}
+temp_yr1_excl.pine <- temp_yr1 %>% filter(!stream=="WS01")
+
+cbf_1_plus3 <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#FFCF56", "#0072B2", "#D55E00", "#CC79A7", "black", "#65532F", "#82204A")
+
+#YR1
+temps.plot_yr1_b.vert<-ggplot(temp_yr1_excl.pine,aes(x=deployment,y=mean_temp,color=stream))+
+  theme_classic()+
+  geom_point(position=position_dodge2(width=0.6))+
+  geom_errorbar(aes(ymin=mean_temp-sd_temp,ymax=mean_temp+sd_temp), width=0.01, position=position_dodge(width=0.6))+
+  xlab("Deployment Months")+ylab("Mean Temperature (°C)")+
+  theme(plot.title = element_blank())+
+  theme(legend.text=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  coord_cartesian(ylim=c(0,18.5))+
+  scale_x_continuous(name = waiver(), breaks = c(1,2,3,4,5,6,7,8,9,10,11,12), minor_breaks = waiver(), 
+                     labels = c("Sep-Nov 17","Oct-Dec 17","Nov 17-Jan 18","Dec 17-Feb 18","Jan-Mar 18",
+                                "Feb-Apr 18","Mar-May 18","Apr-Jun 18","May-Jul 18","Jun-Aug 18","Jul-Sep 18","Aug-Oct 18"),
+                     limits = NULL,expand = waiver(),
+                     trans = "identity", position = "bottom", sec.axis = waiver())+
+  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14,16,18))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x=element_blank())+
+  labs(tag="(a)")+
+  theme(plot.tag = element_text(size=20),
+        plot.tag.position = c(0.7, 0.35))+
+  scale_color_manual(values = cbf_1_plus3,
+                     labels = c("WS02","WS06","WS07","WS08","WS13",
+                                "WS14","WS18","WS27","WS31","WS32","WS36"))
+
+temps.plot_yr1_b.vert
+
+
+#YR2
+temp_yr2_excl.pine <- temp_yr2 %>% filter(!stream=="WS17")
+temps.plot_yr2_b.vert <- ggplot(temp_yr2_excl.pine,aes(x=deployment,y=mean_temp,color=stream))+
+  theme_classic()+
+  geom_point(position=position_dodge(width=0.8))+
+  geom_errorbar(aes(ymin=mean_temp-sd_temp,ymax=mean_temp+sd_temp), width=0.01, position=position_dodge(width=0.8))+
+  xlab("Deployment Months")+ylab("Mean Temperature (°C)")+
+  theme(plot.title = element_blank())+
+  theme(legend.text=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(axis.title=element_blank())+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  coord_cartesian(ylim=c(0,18.5))+
+  scale_x_continuous(name = waiver(), breaks = c(1,2,3,4,5,6,7,8,9,10,11),minor_breaks = waiver(),
+                     labels = c("Sep-Nov 18","Oct-Dec 18","Nov 18-Jan 19","Dec 18-Feb 19","Jan-Mar 19",
+                                "Feb-Apr 19","Mar-May 19","Apr-Jun 19","May-Jul 19","Jun-Aug 19","Jul-Sep 19"),
+                     limits = NULL,expand = waiver(),trans = "identity", position = "bottom", sec.axis = waiver())+
+  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14,16,18))+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_color_brewer(palette="Paired")+
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x=element_blank())+
+  labs(tag="(b)")+
+  theme(plot.tag = element_text(size=20),
+        plot.tag.position = c(0.72, 0.35))
+
+
+temps.plot_yr2_b.vert
+
+temps.plot.2panel.vert <- (temps.plot_yr1_b.vert / temps.plot_yr2_b.vert)+ plot_layout(guides="collect", widths=unit(c(25),c("cm")), heights=unit(c(10,10), c("cm","cm")))
+
+temps.plot.2panel.vert
+
+jpeg(filename="temps.plot.2panel.vert.jpg",  width=30, height=35, units="cm", pointsize=12, bg="white", res=600)
+temps.plot.2panel.vert
+dev.off()
+
+```
+
+Discharge
+```{r}
+dis_yr1_excl.pine <- dis_yr1 %>% filter(!stream=="WS01")
+#YR1
+discharge.plot_yr1_b.vert<-ggplot(dis_yr1_excl.pine,aes(x=deployment,y=mean_flow,color=stream))+
+  theme_classic()+
+  geom_point(position=position_dodge2(width=0.6))+
+  geom_errorbar(aes(ymin=mean_flow-sd_flow,ymax=mean_flow+sd_flow), width=0.01, position=position_dodge(width=0.6))+
+  xlab("Deployment Months")+
+  ylab("Mean discharge (l/s)")+
+  theme(legend.text=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_x_continuous(name = waiver(), breaks = c(1,2,3,4,5,6,7,8,9,10,11,12), minor_breaks = waiver(), 
+                     labels = c("Sep-Nov 17","Oct-Dec 17","Nov 17-Jan 18","Dec 17-Feb 18", "Jan-Mar 18",
+                                "Feb-Apr 18","Mar-May 18","Apr-Jun 18","May-Jul 18","Jun-Aug 18","Jul-Sep 18","Aug-Oct 18"),
+                     limits = NULL,expand = waiver(),trans = "identity", position = "bottom", sec.axis = waiver())+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_y_log10(name = waiver(), breaks = c(0.1,1,10,100,1000),minor_breaks = waiver(), labels = c("0.1","1","10","100","1000"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_blank())+
+  labs(tag="(a)")+
+  theme(plot.tag = element_text(size=20),
+        plot.tag.position = c(0.7, 0.35))+
+  scale_color_manual(values = cbf_1_plus3,
+                     labels = c("WS02","WS06","WS07","WS08","WS13",
+                                "WS14","WS18","WS27","WS31","WS32","WS36"))
+
+discharge.plot_yr1_b.vert
+
+#YR 2
+discharge.plot_yr2_b.vert<-ggplot(dis_yr2,aes(x=deployment,y=mean_flow,color=stream))+
+  theme_classic()+
+  geom_point(position=position_dodge(width=0.8))+
+  geom_errorbar(aes(ymin=mean_flow-sd_flow,ymax=mean_flow+sd_flow), width=0.01, position=position_dodge(width=0.8))+
+  xlab("Deployment Months")+ylab("Mean discharge (l/s)")+
+  theme(legend.text=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(axis.text=element_text(size=12, face="bold"))+
+  scale_x_continuous(name = waiver(), breaks = c(1,2,3,4,5,6,7,8,9,10,11), minor_breaks = waiver(), 
+                     labels = c("Sep-Nov 18","Oct-Dec 18","Nov 18-Jan 19","Dec 18-Feb 19","Jan-Mar 19",
+                                "Feb-Apr 19","Mar-May 19","Apr-Jun 19","May-Jul 19","Jun-Aug 19","Jul-Sep 19"),
+                     limits = NULL,expand = waiver(),trans = "identity", position = "bottom", sec.axis = waiver())+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))+
+  scale_color_brewer(palette="Paired")+
+  scale_y_log10(name = waiver(), breaks = c(0.1,1,10,100,1000),minor_breaks = waiver(), labels = c("0.1","1","10","100","1000"))+
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x=element_blank())+
+  labs(tag="(b)")+
+  theme(plot.tag = element_text(size=20),
+        plot.tag.position = c(0.72, 0.31))
+
+discharge.plot_yr2_b.vert
+
+discharge.plot.2panel.vert <- (discharge.plot_yr1_b.vert / discharge.plot_yr2_b.vert) + plot_layout(guides="collect", widths=unit(c(25),c("cm")), heights=unit(c(10,10), c("cm","cm")))
+
+discharge.plot.2panel.vert
+
+jpeg(filename="discharge.plot.2panel.vert.jpg",  width=30, height=35, units="cm", pointsize=12, bg="white", res=600)
+discharge.plot.2panel.vert
+dev.off()
+
+```
+
+Summaries - mean deployment temperature range, mean deployment discharge range
+```{r}
+
+temp_mins_yr1 <- temp_yr1 %>% group_by(stream) %>% arrange(mean_temp) %>% slice(1)
+temp_maxs_yr1 <- temp_yr1 %>% group_by(stream) %>% arrange(desc(mean_temp)) %>% slice(1)
+
+temp_mins_yr2 <- temp_yr2 %>% group_by(stream) %>% arrange(mean_temp) %>% slice(1)
+temp_maxs_yr2 <- temp_yr2 %>% group_by(stream) %>% arrange(desc(mean_temp)) %>% slice(1)
+
+dis_mins_yr1 <- dis_yr1 %>% group_by(stream) %>% arrange(mean_flow) %>% slice(1)
+dis_maxs_yr1 <- dis_yr1 %>% group_by(stream) %>% arrange(desc(mean_flow)) %>% slice(1)
+
+dis_mins_yr2 <- dis_yr2 %>% group_by(stream) %>% arrange(mean_flow) %>% slice(1)
+dis_maxs_yr2 <- dis_yr2 %>% group_by(stream) %>% arrange(desc(mean_flow)) %>% slice(1)
+
+```
+
+
+Summary - nutrients
+```{r}
+
+summ_nuts.yr1 <- nut.yr1 %>% group_by(stream) %>% summarize(min_nh4=min(mean_nh4.mgl, na.rm=T), max_nh4=max(mean_nh4.mgl, na.rm = T), min_no3=min(mean_no3.mgl), max_no3=max(mean_no3.mgl), min_din=min(mean_din.mgl), max_din=max(mean_din.mgl), min_po4=min(mean_po4.mgl), max_po4=max(mean_po4.mgl))
+
+summ_nuts.yr2 <- nut.yr2 %>% group_by(stream) %>% summarize(min_nh4=min(mean_nh4.mgl, na.rm=T), max_nh4=max(mean_nh4.mgl, na.rm = T), min_no3=min(mean_no3.mgl), max_no3=max(mean_no3.mgl), min_din=min(mean_din.mgl), max_din=max(mean_din.mgl), min_po4=min(mean_po4.mgl), max_po4=max(mean_po4.mgl))
+
+summ_nuts.yr1.micro <- mutate_if(summ_nuts.yr1, is.numeric, ~ . * 1000)
+summ_nuts.yr2.micro <- mutate_if(summ_nuts.yr2, is.numeric, ~ . * 1000)
+```
+
