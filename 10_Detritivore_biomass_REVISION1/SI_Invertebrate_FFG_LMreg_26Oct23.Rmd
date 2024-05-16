@@ -1,0 +1,962 @@
+---
+title: "Invertebrate_FFG_LMreg_19Oct23"
+author: "Carolyn Cummins"
+date: "2023-10-19"
+output: html_document
+---
+
+
+```{r}
+
+library(lubridate)
+library(stringr)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(patchwork)
+library(tidyverse)
+
+pal <- c("#009292", "#ff6db6","#b6dbff","#924900")
+
+```
+
+
+This chunk: get a dataframe and .csv with a list of each unique taxa so that we can assign FFG and LM regressions to each
+```{r}
+
+invert_data_winter_summer <- read.csv("invert_id_data_SI_CSC_19Oct23.csv")
+unique_taxa <- unique(invert_data_winter_summer[c("stage","order", "family", "genus")])
+
+#write.csv(unique_taxa, "CSC_SI_Inverts_unique_taxa.csv")
+```
+
+
+Join FFG to each datapoint
+```{r}
+
+invert.taxa.FFG <- read.csv("CSC_SI_Inverts_unique_taxa_FFG_19Oct23.csv")
+invert_data_FFG <- left_join(invert_data_winter_summer, invert.taxa.FFG)
+
+```
+
+Get dates into date format, exclude cases from the dataset
+```{r}
+
+invert_data_FFG <- invert_data_FFG %>% mutate(sample.date=mdy(sample.date))
+invert_data_FFG <- invert_data_FFG %>% mutate(id.date=mdy(id.date))
+
+invert_data_FFG <- invert_data_FFG %>% filter(!(stage=="case"))
+invert_data_FFG <- invert_data_FFG %>% 
+  filter(!(notes=="sample was collected one month too late")) #exclude 2 samples from July that were collected 1 month too late.
+
+```
+
+
+Create unique ID for each sample based on sample month and bag number
+```{r}
+
+invert_data_FFG$sample.month <- substring(invert_data_FFG$sample.date, 6,7)
+invert_data_FFG <- invert_data_FFG %>% mutate(unique.id=paste(sample.month, sample.id, sep="-"))
+
+```
+
+
+Create a summary dataframe with the number of individuals in each FFG for each sample
+```{r}
+str(invert_data_FFG)
+invert_data_FFG$number <- as.numeric(invert_data_FFG$number)
+invert_data_FFG$length_mm <- as.numeric(invert_data_FFG$length_mm)
+invert_data_FFG$sample.month <- as.factor(invert_data_FFG$sample.month)
+
+invert_data_FFG.sum_month <- invert_data_FFG %>% group_by(sample.date, sample.month, stream, sample.id, unique.id, FFG) %>% summarise(FFG_abundance = sum(number)) %>% ungroup()
+
+```
+
+
+Filter the dataframe for only the shredder FFG. Then, extract all the unique.ids in the overall (all FFGs) df so that we have a list of all the sample ID's that had shredders. 
+```{r}
+
+invert_data_shredders <- invert_data_FFG.sum_month %>% filter(FFG=="SH")
+invert_data_shredders <- invert_data_shredders %>% dplyr::select(unique.id, FFG_abundance)
+
+unique.ids <- as.data.frame(unique(invert_data_FFG.sum_month$unique.id))
+
+colnames(unique.ids)[colnames(unique.ids)=="unique(invert_data_FFG.sum_month$unique.id)"]<-"unique.id"
+
+```
+
+
+Join the unique id's to the shredder df. Unique ID's with no matching shredder data will be filled in with "NA" for the number of shredders. This is because there were no shredders in that sample, so replace all NA's with 0 to reflect this. Left with a datframe with each unique sample ID and the number of shredders in that sample 
+
+**NOTE: shredders_per_sample is the df you want to join with the AFDM remaining data from the leaf packs eventually (to get abundance/g AFDM remaining)**
+```{r}
+
+shredders_per_sample <- left_join(unique.ids, invert_data_shredders)
+colnames(shredders_per_sample)[colnames(shredders_per_sample)=="FFG_abundance"]<-"number_of_shredders"
+
+shredders_per_sample <- shredders_per_sample %>% mutate(sample.month = substr(unique.id,1,2)) # extract first character
+
+shredders_per_sample[is.na(shredders_per_sample)] <- 0
+
+```
+
+
+Create df for graphing that has mean and 95% CI of shredder abundance for each month
+```{r}
+#library(qwraps2)
+shredders_per_sample_avg_by.month <- shredders_per_sample %>% group_by(sample.month) %>% 
+  summarise(average_shredders=mean(number_of_shredders),
+            lci = t.test(number_of_shredders, conf.level = 0.95)$conf.int[1],
+            uci = t.test(number_of_shredders, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(number_of_shredders))) %>% 
+  #unnest_wider(mean.ci)
+#2 ways of getting CI's here and both are pretty much the same...
+
+
+```
+
+
+Make dates into an ordered factor
+```{r}
+sample.month <- c("12", "01", "07", "08")
+sample.dates <- c("12/11/2017", "01/05/2018", "07/05/2018", "08/31/2018")
+sample.months.dates <- data.frame(sample.month, sample.dates)
+sample.months.dates <- sample.months.dates %>% mutate(sample.dates=mdy(sample.dates))
+
+shredders_per_sample_avg_by.month <- left_join(shredders_per_sample_avg_by.month, sample.months.dates)
+
+shredders_per_sample_avg_by.month$sample.month <- ordered(shredders_per_sample_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+shredders_per_sample_avg_by.month <- shredders_per_sample_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+What about total invert abundance? Create a summary df with total abundance per sample, then create another summary df with average abundance of invertebrates per sample for each month with 95% CI. 
+```{r}
+
+total.abundance.per.sample <- invert_data_FFG %>% group_by(sample.date, sample.month, sample.id, unique.id) %>% summarise(total_inverts=sum(number))
+
+inverts_per_sample_avg_by.month <- total.abundance.per.sample %>% group_by(sample.month) %>% 
+  summarise(average_inverts=mean(total_inverts, na.rm=T),
+            lci = t.test(total_inverts, conf.level = 0.95)$conf.int[1],
+            uci = t.test(total_inverts, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(total_inverts))) %>% 
+  #unnest_wider(mean.ci)
+
+inverts_per_sample_avg_by.month$sample.month <- ordered(inverts_per_sample_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+inverts_per_sample_avg_by.month <- inverts_per_sample_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+###
+
+
+Length-mass regressions to get invertebrate mass in the leaf packs.
+
+First, split out the individuals that were ID'ed to genus vs. those ID'ed to family
+```{r}
+
+family_level_ids <- invert_data_FFG %>% filter(genus=="unk")
+genus_level_ids <- invert_data_FFG %>% filter(!genus=="unk")
+
+unique_family_level <- unique(family_level_ids[c("stage","order", "family")])
+unique_genus_level <- unique(genus_level_ids[c("stage","order", "family", "genus")])
+
+#I will now export these family and genus level data and append the a and b values for L-M regression based on Benke et al. 1999 and Wallace et al. (unpublished)
+
+#write.csv(unique_family_level, "family_level_LMreg_data.csv")
+#write.csv(unique_genus_level, "genus_level_LMreg_data.csv")
+
+```
+
+
+Read back in the family and genus level data with a and b values appended. Join the family and genus level data to their respective L-M regression data. Then, bind the family and genus level data back together.
+```{r}
+
+unique_family_level_a_b <- read.csv("family_level_LMreg_data_CSC_20Oct23.csv")
+unique_genus_level_a_b <- read.csv("genus_level_LMreg_data_CSC_20Oct23.csv")
+
+family_level_ids_a_b <- left_join(family_level_ids, unique_family_level_a_b)
+genus_level_ids_a_b <- left_join(genus_level_ids, unique_genus_level_a_b)
+
+family_genus_a_b <- bind_rows(family_level_ids_a_b, genus_level_ids_a_b)
+
+```
+
+
+Filter out the pupae and adults from the dataset
+```{r}
+
+family_genus_a_b_larvae <- family_genus_a_b %>% filter(!stage=="pupa")
+family_genus_a_b_larvae <- family_genus_a_b_larvae %>% filter(!stage=="adult")
+
+```
+
+
+M=aL^b. First, change all the necessary columns for this calculation into numeric, then, perform the calculation for mass in mg for each datapoint. This means performing the LM regression and multiplying it by the number of bugs of that taxon in that sample. THis gives the biomass of bugs for a given taxon in a given sample in the "mass_mg" column
+```{r}
+
+family_genus_a_b_larvae$a <- as.numeric(family_genus_a_b_larvae$a)
+family_genus_a_b_larvae$b <- as.numeric(family_genus_a_b_larvae$b)
+family_genus_a_b_larvae_filt <- family_genus_a_b_larvae %>% filter(!is.na(a))
+
+
+family_genus_a_b_larvae_filt <- family_genus_a_b_larvae_filt %>% mutate(mass_mg = number*(a*(length_mm^b)))
+
+```
+
+
+Create a summary dataframe with total biomass per taxonomic group in each sample (sum across all size classes for a given taxa in a given sample)
+```{r}
+
+family_genus_a_b_filt_taxonomic.bm <- family_genus_a_b_larvae_filt %>% 
+  group_by(sample.date, stream, sample.id, unique.id, stage, order, family, genus, FFG) %>% 
+  summarise(total_biomass_mg=sum(mass_mg), n=sum(number))
+
+```
+
+
+Create another summary dataframe with biomass per FFG in each sample
+```{r}
+
+family_genus_a_b_filt_FFG.bm <- family_genus_a_b_larvae_filt %>% group_by(sample.date, stream, sample.id, unique.id, FFG) %>% 
+  summarise(FFG_biomass_mg=sum(mass_mg), n=sum(number)) %>% ungroup
+
+```
+
+
+Do the same process as above for abundance to get shredder biomass per leaf pack
+```{r}
+
+invert_bm_shredders <- family_genus_a_b_filt_FFG.bm %>% filter(FFG=="SH")
+invert_bm_shredders <- invert_bm_shredders %>% dplyr::select(unique.id, FFG_biomass_mg)
+
+shredder_bm_per_sample <- left_join(unique.ids, invert_bm_shredders)
+colnames(shredder_bm_per_sample)[colnames(shredder_bm_per_sample)=="FFG_biomass_mg"]<-"shredder_biomass"
+
+shredder_bm_per_sample <- shredder_bm_per_sample %>% mutate(sample.month = substr(unique.id,1,2)) # extract first 2 character
+
+shredder_bm_per_sample[is.na(shredder_bm_per_sample)] <- 0
+
+```
+
+
+Create a summary dataframe with average shredder biomass per leaf bag and 95% CI, order the months for plotting
+```{r}
+
+shredder_bm_per_sample_avg_by.month <- shredder_bm_per_sample %>% group_by(sample.month) %>% 
+  summarise(average_shredder_bm=mean(shredder_biomass),
+            lci = t.test(shredder_biomass, conf.level = 0.95)$conf.int[1],
+            uci = t.test(shredder_biomass, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(shredder_biomass))) %>% 
+  #unnest_wider(mean.ci)
+
+shredder_bm_per_sample_avg_by.month$sample.month <- ordered(shredder_bm_per_sample_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+shredder_bm_per_sample_avg_by.month <- shredder_bm_per_sample_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+
+What about total invert biomass? Create a summary df with total biomass per sample, then create another summary df with average biomass of invertebrates per sample for each month with 95% CI. 
+```{r}
+
+total.biomass.per.sample <- family_genus_a_b_larvae_filt %>% group_by(sample.date, sample.month, sample.id, unique.id) %>% summarise(total_invert_biomass=sum(mass_mg, na.rm=T))
+
+
+invert_bm_per_sample_avg_by.month <- total.biomass.per.sample %>% group_by(sample.month) %>% 
+  summarise(average_invert_bm=mean(total_invert_biomass, na.rm=T),
+            lci = t.test(total_invert_biomass, conf.level = 0.95)$conf.int[1],
+            uci = t.test(total_invert_biomass, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(total_invert_biomass))) %>% 
+  #unnest_wider(mean.ci)
+
+
+invert_bm_per_sample_avg_by.month$sample.month <- ordered(invert_bm_per_sample_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+invert_bm_per_sample_avg_by.month <- invert_bm_per_sample_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+###
+
+
+Merge bug data with %AFDM remaining data for coarse-mesh bags in YR1 so that we can make graphs of shredder biomass/abundance per g AFDM remaining in the leaf packs
+
+Read in the coarse data and select/filter only the relevant columns/data
+```{r}
+coarse_breakdown_data_yr1_si <- read.csv("coarse_mesh_data_yr1_raw_afdmrem.csv")
+
+coarse_breakdown_filt_1 <- coarse_breakdown_data_yr1_si %>% dplyr::select(bag_n, rhodo_acer, date_coll, stream, DM_start_g, DM_end_g, afdm_start, afdm_final, percent_afdm_rem_C)
+
+coarse_breakdown_filt_1 <- coarse_breakdown_filt_1 %>% mutate(date_coll=ymd(date_coll))
+coarse_breakdown_filt_1$sample.month <- substring(coarse_breakdown_filt_1$date_coll, 6,7)
+coarse_breakdown_filt_1 <- coarse_breakdown_filt_1 %>% mutate(unique.id=paste(sample.month, bag_n, sep="-"))
+
+coarse_breakdown_filt_2_R <- coarse_breakdown_filt_1 %>% filter(rhodo_acer=="R")
+
+coarse_breakdown_filt_3_R_dates <- coarse_breakdown_filt_2_R %>% filter(sample.month=="12" | sample.month=="01" | sample.month=="07" | sample.month=="08")
+
+coarse_breakdown_tojoin <- coarse_breakdown_filt_3_R_dates %>% dplyr::select(unique.id, sample.month, DM_start_g, afdm_start, DM_end_g, afdm_final, percent_afdm_rem_C)
+
+coarse_breakdown_tojoin$sample.month <- as.factor(coarse_breakdown_tojoin$sample.month)  
+
+```
+
+
+Join litterbag data with:
+shredders_per_sample
+total.abundance.per.sample
+shredder_bm_per_sample
+total.biomass.per.sample
+```{r}
+
+shredders_per_sample_LL <- left_join(shredders_per_sample, coarse_breakdown_tojoin)
+#remove NA's
+shredders_per_sample_LL <- shredders_per_sample_LL %>% filter(!is.na(afdm_final)) #removes 5 observations
+
+total.abundance.per.sample_LL <- left_join(total.abundance.per.sample, coarse_breakdown_tojoin)
+#remove NA's
+total.abundance.per.sample_LL <- total.abundance.per.sample_LL %>% filter(!is.na(afdm_final)) #removes 5 observations
+
+shredder_bm_per_sample_LL <- left_join(shredder_bm_per_sample, coarse_breakdown_tojoin)
+#remove NA's
+shredder_bm_per_sample_LL <- shredder_bm_per_sample_LL %>% filter(!is.na(afdm_final))
+
+total.biomass.per.sample_LL <- left_join(total.biomass.per.sample, coarse_breakdown_tojoin)
+#remove NA's
+total.biomass.per.sample_LL <- total.biomass.per.sample_LL %>% filter(!is.na(afdm_final))
+
+```
+
+
+Join these dfs back with stream
+```{r}
+
+#Need to bind the stream data back to the datasets first
+unique.id.stream <- coarse_breakdown_filt_3_R_dates %>% distinct(unique.id, stream)
+
+shredder_bm_per_sample_LL <- left_join(shredder_bm_per_sample_LL, unique.id.stream)
+shredders_per_sample_LL <- left_join(shredders_per_sample_LL, unique.id.stream)
+total.biomass.per.sample_LL <- left_join(total.biomass.per.sample_LL, unique.id.stream)
+total.abundance.per.sample_LL <- left_join(total.abundance.per.sample_LL, unique.id.stream)
+
+```
+
+
+number of shredders per g afdm
+```{r}
+
+shredders_per_sample_LL <- shredders_per_sample_LL %>% mutate(shredders_per_g_afdm = number_of_shredders/afdm_final)
+
+shredders_per_gAFDM_avg_by.month <- shredders_per_sample_LL %>% group_by(sample.month) %>% 
+  summarise(average_shredders_per_gAFDM=mean(shredders_per_g_afdm),
+            lci = t.test(shredders_per_g_afdm, conf.level = 0.95)$conf.int[1],
+            uci = t.test(shredders_per_g_afdm, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(shredders_per_g_afdm))) %>% 
+  #unnest_wider(mean.ci)
+
+shredders_per_gAFDM_avg_by.month$sample.month <- ordered(shredders_per_gAFDM_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+shredders_per_gAFDM_avg_by.month <- shredders_per_gAFDM_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+biomass of shredders per g afdm
+```{r}
+
+shredder_bm_per_sample_LL <- shredder_bm_per_sample_LL %>% mutate(shredder_bm_per_g_afdm = shredder_biomass/afdm_final)
+
+shredder_bm_per_gAFDM_avg_by.month <- shredder_bm_per_sample_LL %>% group_by(sample.month) %>% 
+  summarise(average_shredder_bm_per_gAFDM=mean(shredder_bm_per_g_afdm),
+            lci = t.test(shredder_bm_per_g_afdm, conf.level = 0.95)$conf.int[1],
+            uci = t.test(shredder_bm_per_g_afdm, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(shredder_bm_per_g_afdm))) %>% 
+  #unnest_wider(mean.ci)
+
+shredder_bm_per_gAFDM_avg_by.month$sample.month <- ordered(shredder_bm_per_gAFDM_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+shredder_bm_per_gAFDM_avg_by.month <- shredder_bm_per_gAFDM_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+total number of invertebrates per g afdm
+```{r}
+
+total.abundance.per.sample_LL <- total.abundance.per.sample_LL %>% mutate(inverts_per_g_afdm = total_inverts/afdm_final)
+
+inverts_per_gAFDM_avg_by.month <- total.abundance.per.sample_LL %>% group_by(sample.month) %>% 
+  summarise(average_inverts_per_gAFDM=mean(inverts_per_g_afdm),
+            lci = t.test(inverts_per_g_afdm, conf.level = 0.95)$conf.int[1],
+            uci = t.test(inverts_per_g_afdm, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(inverts_per_g_afdm))) %>% 
+  #unnest_wider(mean.ci)
+
+inverts_per_gAFDM_avg_by.month$sample.month <- ordered(inverts_per_gAFDM_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+inverts_per_gAFDM_avg_by.month <- inverts_per_gAFDM_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+total invertebrate biomass per g afdm
+```{r}
+
+total.biomass.per.sample_LL <- total.biomass.per.sample_LL %>% mutate(invert_bm_per_g_afdm = total_invert_biomass/afdm_final)
+
+invert_bm_per_gAFDM_avg_by.month <- total.biomass.per.sample_LL %>% group_by(sample.month) %>% 
+  summarise(average_invert_bm_per_gAFDM=mean(invert_bm_per_g_afdm),
+            lci = t.test(invert_bm_per_g_afdm, conf.level = 0.95)$conf.int[1],
+            uci = t.test(invert_bm_per_g_afdm, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(invert_bm_per_g_afdm))) %>% 
+  #unnest_wider(mean.ci)
+
+invert_bm_per_gAFDM_avg_by.month$sample.month <- ordered(invert_bm_per_gAFDM_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+invert_bm_per_gAFDM_avg_by.month <- invert_bm_per_gAFDM_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+For total invert biomass, take the log of total biomass/gAFDM
+```{r}
+
+total.biomass.per.sample_LL <- total.biomass.per.sample_LL %>% mutate(ln_invert_biomass_AFDM=log(invert_bm_per_g_afdm))
+
+log_invert_bm_per_gAFDM_avg_by.month <- total.biomass.per.sample_LL %>% group_by(sample.month) %>% 
+  summarise(average_log_invert_bm_per_gAFDM=mean(ln_invert_biomass_AFDM),
+            lci = t.test(ln_invert_biomass_AFDM, conf.level = 0.95)$conf.int[1],
+            uci = t.test(ln_invert_biomass_AFDM, conf.level = 0.95)$conf.int[2])#,
+            #mean.ci=list(mean_ci(ln_invert_biomass_AFDM))) %>% 
+  #unnest_wider(mean.ci)
+
+log_invert_bm_per_gAFDM_avg_by.month$sample.month <- ordered(log_invert_bm_per_gAFDM_avg_by.month$sample.month, levels = c("12","01","07","08"))
+
+log_invert_bm_per_gAFDM_avg_by.month <- log_invert_bm_per_gAFDM_avg_by.month %>% arrange(sample.month)
+
+```
+
+
+###
+
+
+LMER models with a random effect for stream
+
+lmer(shredder biomass per g afdm ~ sample.month)
+```{r}
+
+shredder_bm_per_sample_LL$sample.month <- as.factor(shredder_bm_per_sample_LL$sample.month)
+
+lmer_shredder_biomass_perg <- lmer(shredder_bm_per_g_afdm~sample.month + (1|stream), data=shredder_bm_per_sample_LL)
+summary(lmer_shredder_biomass_perg)
+
+#residuals
+resid.sh.bm.perg <- residuals(lmer_shredder_biomass_perg)
+
+```
+
+
+*Different ways of doing multiple comparisons -- which is most appropriate?*
+Multiple comparisons - shredder biomass per g AFDM
+```{r}
+
+emmeans(lmer_shredder_biomass_perg, list(pairwise ~ sample.month))
+#lsmeans(lmer_shredder_biomass_perg, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_shredder_biomass_perg,lsm(pairwise~sample.month)))
+#summary(glht(lmer_shredder_biomass_perg, linfct=mcp(sample.month = "Tukey")))
+
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+lmer(shredder abundance per g AFDM ~ sample month)
+```{r}
+
+shredders_per_sample_LL$sample.month <- as.factor(shredders_per_sample_LL$sample.month)
+
+lmer_shredder_abundance_perg <- lmer(shredders_per_g_afdm~sample.month + (1|stream), data=shredders_per_sample_LL)
+summary(lmer_shredder_abundance_perg)
+
+#model residuals
+resid.sh.abund.perg <- residuals(lmer_shredder_abundance_perg)
+
+```
+
+
+Multiple comparisons - shredder abundance per g AFDM
+```{r}
+
+emmeans(lmer_shredder_abundance_perg, list(pairwise ~ sample.month))
+#lsmeans(lmer_shredder_abundance_perg, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_shredder_abundance_perg, lsm(pairwise~sample.month)))
+#summary(glht(lmer_shredder_abundance_perg, linfct=mcp(sample.month = "Tukey")))
+
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+###
+
+
+LMER models for the per-leaf-pack data
+Need to bind the stream data back to the datasets first
+```{r}
+
+shredder_bm_per_sample <- left_join(shredder_bm_per_sample, unique.id.stream)
+shredders_per_sample <- left_join(shredders_per_sample, unique.id.stream)
+total.biomass.per.sample <- left_join(total.biomass.per.sample, unique.id.stream)
+total.abundance.per.sample <- left_join(total.abundance.per.sample, unique.id.stream)
+
+```
+
+
+lmer(shredder bm per leaf pack ~ sample.month)
+```{r}
+
+shredder_bm_per_sample$sample.month <- as.factor(shredder_bm_per_sample$sample.month)
+
+lmer_shredder_biomass_perlp <- lmer(shredder_biomass~sample.month + (1|stream), data=shredder_bm_per_sample)
+summary(lmer_shredder_biomass_perlp)
+
+#model residuals
+resid.sh.biomass.perlp <- residuals(lmer_shredder_biomass_perlp)
+
+```
+
+
+Multiple comparisons - shredder bm per leaf pack
+```{r}
+
+emmeans(lmer_shredder_biomass_perlp, list(pairwise ~ sample.month))
+#lsmeans(lmer_shredder_biomass_perlp, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_shredder_biomass_perlp, lsm(pairwise~sample.month)))
+#summary(glht(lmer_shredder_biomass_perlp, linfct=mcp(sample.month = "Tukey")))
+
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+Boxplot - shredder biomass per leaf pack
+```{r}
+
+shredder_bm_per_sample$sample.month <- ordered(shredder_bm_per_sample$sample.month, levels = c("12","01","07","08"))
+
+shredder_bm_per_sample <- shredder_bm_per_sample %>% arrange(sample.month)
+
+
+boxplot.sh.bm.perlp <- ggplot(shredder_bm_per_sample, aes(x=sample.month, y=shredder_biomass, fill=sample.month))+
+  geom_boxplot()+
+  geom_jitter(shape=16, position = position_jitter(0.2))+
+  theme_classic()+
+  labs(x= "Sample month", y = expression(paste("Detritivore biomass (mg) per leaf pack")))+
+  scale_fill_manual(values = pal, labels=c("11 Dec 17 (Oct-Dec)", "5 Jan 18 (Nov-Jan)",
+                                          "5 Jul 18 (May-Jul)", "31 Aug 18 (Jul-Sep)"))+
+  theme(axis.text.x = element_text(face="bold",size=14))+ 
+  scale_x_discrete(breaks=c("12","01","07", "08"),
+        labels=c(expression(atop(paste("11 Dec 17"),"(Oct-Dec)")), expression(atop(paste("5 Jan 18"),"(Nov-Jan)")), 
+                 expression(atop(paste("5 Jul 18"),"(May-Jul)")), expression(atop(paste("31 Aug 18"),"(Jul-Sep)"))))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y = element_text(size=14))+
+  theme(axis.text.y=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=12))+
+  #labs(tag="(a)")+theme(plot.tag = element_text(size=20),plot.tag.position = c(0.25, 0.97))+
+  #theme(axis.text.x = element_blank())+
+  scale_y_continuous(limits = c(0, 300), breaks = c(0, 100, 200, 300))+
+  theme(legend.position="none")
+
+boxplot.sh.bm.perlp
+
+```
+
+Export detritivore bm per leaf pack plot
+```{r}
+
+jpeg(filename="det.bm.lp.jpg", width=25, height=20, units="cm", pointsize=12, bg="white", res=600)
+boxplot.sh.bm.perlp
+dev.off()
+
+```
+
+
+
+lmer(shredder abundance ~ sample.month)
+```{r}
+
+shredders_per_sample$sample.month <- as.factor(shredders_per_sample$sample.month)
+
+lmer_shredder_abundance_perlp <- lmer(number_of_shredders~sample.month + (1|stream), data=shredders_per_sample)
+summary(lmer_shredder_abundance_perlp)
+
+#model residuals
+resid.sh.abund.perlp <- residuals(lmer_shredder_abundance_perlp)
+
+```
+
+
+Multiple comparisons - shredder abundance per leaf pack
+```{r}
+
+emmeans(lmer_shredder_abundance_perlp, list(pairwise ~ sample.month))
+#lsmeans(lmer_shredder_abundance_perlp, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_shredder_abundance_perlp, lsm(pairwise~sample.month)))
+#summary(glht(lmer_shredder_abundance_perlp, linfct=mcp(sample.month = "Tukey")))
+
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+Boxplot - shredder abundance per leaf pack
+```{r}
+
+shredders_per_sample$sample.month <- ordered(shredders_per_sample$sample.month, levels = c("12","01","07","08"))
+
+shredders_per_sample <- shredders_per_sample %>% arrange(sample.month)
+
+
+boxplot.sh.abund.perlp <- ggplot(shredders_per_sample, aes(x=sample.month, y=number_of_shredders, fill=sample.month))+
+  geom_boxplot()+
+  geom_jitter(shape=16, position = position_jitter(0.2))+
+  theme_classic()+
+  labs(x= "Sample month", y = expression(paste("Detritivore abundance per leaf pack")))+
+  scale_fill_manual(values = pal, labels=c("11 Dec 17 (Oct-Dec)", "5 Jan 18 (Nov-Jan)",
+                                          "5 Jul 18 (May-Jul)", "31 Aug 18 (Jul-Sep)"))+
+  theme(axis.text.x = element_text(face="bold",size=14))+ 
+  scale_x_discrete(breaks=c("12","01","07", "08"),
+        labels=c(expression(atop(paste("11 Dec 17"),"(Oct-Dec)")), expression(atop(paste("5 Jan 18"),"(Nov-Jan)")), 
+                 expression(atop(paste("5 Jul 18"),"(May-Jul)")), expression(atop(paste("31 Aug 18"),"(Jul-Sep)"))))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y = element_text(size=14))+
+  theme(axis.text.y=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=12))+
+  #labs(tag="(b)")+theme(plot.tag = element_text(size=20),plot.tag.position = c(0.18, 0.97))+
+  #theme(axis.text.x = element_blank())+
+  scale_y_continuous(limits = c(0, 70), breaks = c(0, 20, 40, 60))+
+  theme(legend.position = "none")
+
+boxplot.sh.abund.perlp
+
+```
+
+
+Export detritivore abundance per leaf pack plot
+```{r}
+
+jpeg(filename="det.abund.lp.jpg", width=25, height=20, units="cm", pointsize=12, bg="white", res=600)
+boxplot.sh.abund.perlp
+dev.off()
+
+```
+
+###
+
+
+Try adding a small value to the shredders (abundance/biomass) per g AFDM data, then log, then graph and model
+
+Add the smallest value in the dataset to both shredders per g afdm and shredder bm per g afdm
+```{r}
+
+shredders_per_sample_no0 <- shredders_per_sample_LL %>% filter(!shredders_per_g_afdm==0)
+min(shredders_per_sample_no0$shredders_per_g_afdm)
+#0.24
+shredder_bm_per_sample_LL_no0 <- shredder_bm_per_sample_LL %>% filter(!shredder_bm_per_g_afdm==0)
+min(shredder_bm_per_sample_LL_no0$shredder_bm_per_g_afdm)
+#0.018
+
+shredders_per_sample_LL <- shredders_per_sample_LL %>% mutate(shredders_per_g_afdm_plus0.24 = shredders_per_g_afdm+0.24) #add smallest value in the dataset
+shredder_bm_per_sample_LL <- shredder_bm_per_sample_LL %>% mutate(shredder_bm_per_g_afdm_plus0.018 = shredder_bm_per_g_afdm+0.018) #add smallest value in the dataset
+
+#log the values above
+shredders_per_sample_LL <- shredders_per_sample_LL %>% mutate(ln_shredders_per_g_afdm_plus0.24 = log(shredders_per_g_afdm_plus0.24))
+shredder_bm_per_sample_LL <- shredder_bm_per_sample_LL %>% mutate(ln_shredder_bm_per_g_afdm_plus0.018 = log(shredder_bm_per_g_afdm_plus0.018))
+
+```
+
+
+Models for smallest values added - shredder abundance
+```{r}
+
+lmer_shredder_abundance_log_0.24 <- lmer(log(shredders_per_g_afdm_plus0.24)~sample.month + (1|stream), data=shredders_per_sample_LL)
+summary(lmer_shredder_abundance_log_0.24)
+emmeans(lmer_shredder_abundance_log_0.24, list(pairwise ~ sample.month))
+#lsmeans(lmer_shredder_abundance_log_0.24, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_shredder_abundance_log_0.24, lsm(pairwise~sample.month)))
+#summary(glht(lmer_shredder_abundance_log_0.24, linfct=mcp(sample.month = "Tukey")))
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+#histogram of model residuals
+resid.ln.abund.perg.0.24 <- residuals(lmer_shredder_abundance_log_0.24)
+
+```
+
+
+Boxplot - log (shredder abundance per g AFDM + 0.24)
+```{r}
+
+shredders_per_sample_LL$sample.month <- ordered(shredders_per_sample_LL$sample.month, levels = c("12","01","07","08"))
+
+shredders_per_sample_LL <- shredders_per_sample_LL %>% arrange(sample.month)
+
+boxplot.sh.abund.pergAFDM.0.24 <- ggplot(shredders_per_sample_LL, aes(x=sample.month, y=shredders_per_g_afdm_plus0.24, fill=sample.month))+
+  geom_boxplot()+
+  geom_jitter(shape=16, position = position_jitter(0.2))+
+  theme_classic()+
+  labs(x= "Sample month", y = expression(paste("Detritivore abundance gAFDM"^-1*"")))+
+  scale_fill_manual(values = pal, labels=c("11 Dec 17 (Oct-Dec)", "5 Jan 18 (Nov-Jan)",
+                                          "5 Jul 18 (May-Jul)", "31 Aug 18 (Jul-Sep)"))+
+  theme(axis.text.x = element_text(face="bold",size=14))+ 
+  scale_x_discrete(breaks=c("12","01","07", "08"),
+        labels=c(expression(atop(paste("11 Dec 17"),"(Oct-Dec)")), expression(atop(paste("5 Jan 18"),"(Nov-Jan)")), 
+                 expression(atop(paste("5 Jul 18"),"(May-Jul)")), expression(atop(paste("31 Aug 18"),"(Jul-Sep)"))))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y = element_text(size=14))+
+  theme(axis.text.y=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=12))+
+  scale_y_continuous(trans="log", limits = c(0.1, 210), breaks = c(0.1, 1, 10, 50, 200))#+
+  #theme(legend.position="none")
+  #labs(tag="(d)")+theme(plot.tag = element_text(size=20),plot.tag.position = c(0.18, 0.97))
+
+boxplot.sh.abund.pergAFDM.0.24
+
+```
+
+Export detritivore biomass per g plot
+```{r}
+
+jpeg(filename="det.abund.g.jpg", width=25, height=20, units="cm", pointsize=12, bg="white", res=600)
+boxplot.sh.abund.pergAFDM.0.24
+dev.off()
+
+```
+
+
+Models for smallest values added - shredder biomass
+```{r}
+
+lmer_shredder_biomass_log_0.018 <- lmer(log(shredder_bm_per_g_afdm_plus0.018)~sample.month + (1|stream), data=shredder_bm_per_sample_LL)
+summary(lmer_shredder_biomass_log_0.018)
+
+emmeans(lmer_shredder_biomass_log_0.018, list(pairwise ~ sample.month))
+#lsmeans(lmer_shredder_biomass_log_0.018, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_shredder_biomass_log_0.018, lsm(pairwise~sample.month)))
+#summary(glht(lmer_shredder_biomass_log_0.018, linfct=mcp(sample.month = "Tukey")))
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+Boxplot - log (shredder biomass per g AFDM + 0.018)
+```{r}
+
+shredder_bm_per_sample_LL$sample.month <- ordered(shredder_bm_per_sample_LL$sample.month, levels = c("12","01","07","08"))
+
+shredder_bm_per_sample_LL <- shredder_bm_per_sample_LL %>% arrange(sample.month)
+
+boxplot.sh.bm.pergAFDM.0.018 <- ggplot(shredder_bm_per_sample_LL, aes(x=sample.month, y=shredder_bm_per_g_afdm_plus0.018, fill=sample.month))+
+  geom_boxplot()+
+  geom_jitter(shape=16, position = position_jitter(0.2))+
+  theme_classic()+
+  labs(x= "Sample month", y = expression(paste("Detritivore biomass (mg) gAFDM"^-1*"")))+
+  scale_fill_manual(values = pal, labels=c("11 Dec 17 (Oct-Dec)", "5 Jan 18 (Nov-Jan)",
+                                          "5 Jul 18 (May-Jul)", "31 Aug 18 (Jul-Sep)"))+
+  theme(axis.text.x = element_text(face="bold",size=14))+ 
+  scale_x_discrete(breaks=c("12","01","07", "08"),
+        labels=c(expression(atop(paste("11 Dec 17"),"(Oct-Dec)")), expression(atop(paste("5 Jan 18"),"(Nov-Jan)")), 
+                 expression(atop(paste("5 Jul 18"),"(May-Jul)")), expression(atop(paste("31 Aug 18"),"(Jul-Sep)"))))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y = element_text(size=14))+
+  theme(axis.text.y=element_text(size=14))+
+  theme(legend.title=element_blank())+
+  theme(legend.text=element_text(size=12))+
+  scale_y_continuous(trans="log", limits = c(0.01, 460), breaks = c(0.01, 0.1, 2, 50, 450))#+
+  #theme(legend.position="none")
+  # labs(tag="(c)")+theme(plot.tag = element_text(size=20),plot.tag.position = c(0.25, 0.97))
+
+boxplot.sh.bm.pergAFDM.0.018
+
+```
+
+
+Export detritivore biomass per g plot
+```{r}
+
+jpeg(filename="det.bm.g.jpg", width=25, height=20, units="cm", pointsize=12, bg="white", res=600)
+boxplot.sh.bm.pergAFDM.0.018
+dev.off()
+
+```
+
+
+###
+
+
+4-panel figure - shredder abundance/biomass per lp, shredder abundance/biomass per g AFDM (log values for ratios plus the smallest value in the data)
+```{r}
+
+shredders_4_panel <- boxplot.sh.bm.perlp + boxplot.sh.abund.perlp + boxplot.sh.bm.pergAFDM.0.018 + boxplot.sh.abund.pergAFDM.0.24 + plot_layout(guides="collect", widths=unit(c(10.5),c("cm")), heights=unit(c(8), c("cm")))
+
+shredders_4_panel
+
+```
+
+Export the shredder 4-panel
+```{r}
+
+jpeg(filename="shredder_4_panel.jpg", width=32, height=28, units="cm", pointsize=12, bg="white", res=600)
+shredders_4_panel
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+###Below: LMER Models for total invertebrate community
+
+lmer(total invert biomass per g AFDM ~ sample month)
+```{r}
+
+total.biomass.per.sample_LL$sample.month <- as.factor(total.biomass.per.sample_LL$sample.month)
+
+lmer_invert_biomass_perg <- lmer(invert_bm_per_g_afdm~sample.month + (1|stream), data=total.biomass.per.sample_LL)
+summary(lmer_invert_biomass_perg)
+
+#model residuals
+resid.inv.biomass.perg <- residuals(lmer_invert_biomass_perg)
+
+```
+
+
+Multiple comparisons - invertebrate biomass per g afdm
+```{r}
+
+emmeans(lmer_invert_biomass_perg, list(pairwise ~ sample.month))
+#lsmeans(lmer_invert_biomass, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_invert_biomass, lsm(pairwise~sample.month)))
+#summary(glht(lmer_invert_biomass, linfct=mcp(sample.month = "Tukey")))
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+lmer(total invert abundance per g afdm ~ sample.month)
+```{r}
+
+total.abundance.per.sample_LL$sample.month <- as.factor(total.abundance.per.sample_LL$sample.month)
+
+lmer_invert_abundance.perg <- lmer(inverts_per_g_afdm~sample.month + (1|stream), data=total.abundance.per.sample_LL)
+summary(lmer_invert_abundance.perg)
+
+#histogram of model residuals
+resid.inv.abund.perg <- residuals(lmer_invert_abundance.perg)
+
+```
+
+
+Multiple comparisons - invertebrate abundance per g afdm
+```{r}
+
+emmeans(lmer_invert_abundance.perg, list(pairwise ~ sample.month))
+#lsmeans(lmer_invert_abundance, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_invert_abundance, lsm(pairwise~sample.month)))
+#summary(glht(lmer_invert_abundance, linfct=mcp(sample.month = "Tukey")))
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+lmer(log invert biomass ~ sample.month)
+```{r}
+
+lmer_ln_invert_biomass_perg <- lmer(ln_invert_biomass_AFDM~sample.month + (1|stream), data=total.biomass.per.sample_LL)
+summary(lmer_ln_invert_biomass_perg)
+
+#model residuals
+resid.ln.inv.biomass.perg <- residuals(lmer_ln_invert_biomass_perg)
+
+```
+
+
+Multiple comparisons - log invertebrate biomass per g afdm
+```{r}
+
+emmeans(lmer_ln_invert_biomass, list(pairwise ~ sample.month))
+#lsmeans(lmer_ln_invert_biomass, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_ln_invert_biomass, lsm(pairwise~sample.month)))
+#summary(glht(lmer_ln_invert_biomass, linfct=mcp(sample.month = "Tukey")))
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+lmer(total abundance per leaf pack ~ sample.month)
+```{r}
+
+total.abundance.per.sample$sample.month <- as.factor(total.abundance.per.sample$sample.month)
+
+lmer_invert_abundance_perlp <- lmer(total_inverts~sample.month + (1|stream), data=total.abundance.per.sample)
+summary(lmer_invert_abundance_perlp)
+
+#model residuals
+resid.inv.abund.perlp <- residuals(lmer_invert_abundance_perlp)
+
+```
+
+
+Multiple comparisons - total abundance per leaf pack
+```{r}
+
+emmeans(lmer_invert_abundance_perlp, list(pairwise ~ sample.month))
+#lsmeans(lmer_invert_abundance_perlp, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_invert_abundance_perlp, lsm(pairwise~sample.month)))
+#summary(glht(lmer_invert_abundance_perlp, linfct=mcp(sample.month = "Tukey")))
+
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+lmer(total biomass per leaf pack ~ sample.month)
+```{r}
+
+lmer_invert_biomass_perlp <- lmer(total_invert_biomass~sample.month + (1|stream), data=total.biomass.per.sample_LL)
+summary(lmer_invert_biomass_perlp)
+
+#model residuals
+resid.inv.bm.perlp <- residuals(lmer_invert_biomass_perlp)
+
+```
+
+
+Multiple comparisons - total biomass per leaf pack
+```{r}
+
+emmeans(lmer_invert_biomass_perlp, list(pairwise ~ sample.month))
+#lsmeans(lmer_invert_biomass_perlp, list(pairwise~sample.month))#appears to be the same as emmeans
+#summary(glht(lmer_invert_biomass_perlp, lsm(pairwise~sample.month)))
+#summary(glht(lmer_invert_biomass_perlp, linfct=mcp(sample.month = "Tukey")))
+
+#all multcomp methods agree for this model in terms of which pairwise differences are significant
+
+```
+
+
+
+
