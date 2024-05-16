@@ -1,0 +1,211 @@
+---
+title: "SI_Phys_Chem_LitterBreakdown_Master_File"
+author: "Carolyn Cummins"
+date: "10/3/2023"
+output: html_document
+---
+This is an Rmd file for reading in all the serial incubations data - temperature, discharge, nutrients, and litter breakdown - and getting it into one dataframe for analysis.
+
+***UPDATED 10 October 2023 for manuscript revision. In this version, the litter breakdown data that we read in has been filtered to exclude weight "gains" (1 observation in entire dataset) and, as a consequence of that filtering, also all the NA/Inf values
+
+****Updated 1 Feb 2024 with corrected, modeled values for April 5 and 6 for all streams
+
+*******Updated 3 May 24 with updated litter breakdown csvs -- nothing has changed in terms of the data, but we changed the calculations in year 1 and year 2 data carpentry files so that we were calculating absolute values of k based on multiplying by negative 1 instead of taking the absolute value. However, this doesn't change anything since all k-values were negative except one coarse-mesh k in year 1, which we excluded in the data carpentry steps for Year 1 (see "cleaning and calculations" Rmd)
+
+Load packages
+```{r}
+library(tidyverse)
+library(lubridate)
+library(Rmisc)
+library(lme4)
+library(lmerTest)
+library(ggplot2)
+```
+
+
+Read in the data
+```{r}
+
+#litter breakdown
+lb_si_yr1 <- read.csv("litter_breakdown_coarse_fine_yr1_all.3May24.csv")
+lb_si_yr1 <- lb_si_yr1 %>% mutate(date_coll=ymd(date_coll))
+lb_si_yr1 <- lb_si_yr1 %>% mutate(date_dep=ymd(date_dep))
+
+
+lb_si_yr2 <- read.csv("litter_breakdown_coarse_fine_yr2_all.3May24.csv")
+lb_si_yr2 <- lb_si_yr2 %>% mutate(date_coll=ymd(date_coll))
+lb_si_yr2 <- lb_si_yr2 %>% mutate(date_dep=ymd(date_dep))
+
+#temp
+dep_temp_si_yr1 <-read.csv("landscape_deployment_temp_masterlong_SIyr1.1Feb24.csv")
+dep_temp_si_yr1 <- dep_temp_si_yr1 %>% mutate(start_date=ymd(start_date))
+dep_temp_si_yr1 <- dep_temp_si_yr1 %>% mutate(end_date=ymd(end_date))
+colnames(dep_temp_si_yr1)[colnames(dep_temp_si_yr1)=="start_date"] <- "date_dep"
+colnames(dep_temp_si_yr1)[colnames(dep_temp_si_yr1)=="end_date"] <- "date_coll"
+colnames(dep_temp_si_yr1)[colnames(dep_temp_si_yr1)=="days_in_record"] <- "days_in_record_temp"
+
+dep_temp_si_yr2 <- read.csv("landscape_deployment_temp_masterlong_SIyr2_UPD23Feb23.csv")
+dep_temp_si_yr2 <- dep_temp_si_yr2 %>% mutate(start_date=ymd(start_date))
+dep_temp_si_yr2 <- dep_temp_si_yr2 %>% mutate(end_date=ymd(end_date))
+colnames(dep_temp_si_yr2)[colnames(dep_temp_si_yr2)=="start_date"] <- "date_dep"
+colnames(dep_temp_si_yr2)[colnames(dep_temp_si_yr2)=="end_date"] <- "date_coll"
+colnames(dep_temp_si_yr2)[colnames(dep_temp_si_yr2)=="days_in_record"] <- "days_in_record_temp"
+
+#discharge
+dep_discharge_si_yr1 <- read.csv("landscape_deployment_discharge_masterlong_SIyr1_UPD23Feb23.csv")
+dep_discharge_si_yr1 <- dep_discharge_si_yr1 %>% mutate(start_date=ymd(start_date))
+dep_discharge_si_yr1 <- dep_discharge_si_yr1 %>% mutate(end_date=ymd(end_date))
+colnames(dep_discharge_si_yr1)[colnames(dep_discharge_si_yr1)=="start_date"] <- "date_dep"
+colnames(dep_discharge_si_yr1)[colnames(dep_discharge_si_yr1)=="end_date"] <- "date_coll"
+
+dep_discharge_si_yr2 <- read.csv("landscape_deployment_discharge_masterlong_SIyr2_UPD23Feb23.csv")
+dep_discharge_si_yr2 <- dep_discharge_si_yr2 %>% mutate(start_date=ymd(start_date))
+dep_discharge_si_yr2 <- dep_discharge_si_yr2 %>% mutate(end_date=ymd(end_date))
+colnames(dep_discharge_si_yr2)[colnames(dep_discharge_si_yr2)=="start_date"] <- "date_dep"
+colnames(dep_discharge_si_yr2)[colnames(dep_discharge_si_yr2)=="end_date"] <- "date_coll"
+
+#nutrients
+dep_nutrients_si_yr1 <- read.csv("deployment_nuts_masterlong_SIyr1.csv")
+dep_nutrients_si_yr1 <- dep_nutrients_si_yr1 %>% mutate(start_date=ymd(start_date))
+dep_nutrients_si_yr1 <- dep_nutrients_si_yr1 %>% mutate(end_date=ymd(end_date))
+colnames(dep_nutrients_si_yr1)[colnames(dep_nutrients_si_yr1)=="start_date"] <- "date_dep"
+colnames(dep_nutrients_si_yr1)[colnames(dep_nutrients_si_yr1)=="end_date"] <- "date_coll"
+
+dep_nutrients_si_yr2 <- read.csv("deployment_nuts_masterlong_SIyr2_UPD23Feb23.csv")
+dep_nutrients_si_yr2 <- dep_nutrients_si_yr2 %>% mutate(start_date=ymd(start_date))
+dep_nutrients_si_yr2 <- dep_nutrients_si_yr2 %>% mutate(end_date=ymd(end_date))
+colnames(dep_nutrients_si_yr2)[colnames(dep_nutrients_si_yr2)=="start_date"] <- "date_dep"
+colnames(dep_nutrients_si_yr2)[colnames(dep_nutrients_si_yr2)=="end_date"] <- "date_coll"
+
+#deleting unnecessary streams from nutrient data yr 1 and 2 - yr1 has some yr2 streams and yr2 has some yr1 streams...
+dep_nutrients_si_yr1<-subset(dep_nutrients_si_yr1, stream!="WS17" & stream!="WS34" & stream!="WS37")
+dep_nutrients_si_yr2<-subset(dep_nutrients_si_yr2, stream!="WS01" & stream!="WS02" & stream!="WS06" & stream!="WS07" & stream!="WS08" & stream!="WS13" & stream!="WS14" & stream!="WS18" & stream!="WS27" & stream!="WS31" & stream!="WS32" & stream!="WS36")
+
+#deployments
+deployments_yr1 <- read.csv("SI_yr1_deployments.csv")
+deployments_yr1 <- deployments_yr1 %>% mutate(date_dep=mdy(date_dep))
+deployments_yr1 <- deployments_yr1 %>% mutate(date_coll=mdy(date_coll))
+
+deployments_yr2 <- read.csv("SI_yr2_deployments_UPD23Feb23.csv")
+deployments_yr2 <- deployments_yr2 %>% mutate(date_dep=mdy(date_dep))
+deployments_yr2 <- deployments_yr2 %>% mutate(date_coll=mdy(date_coll))
+
+#delete annoying first column in all the dfs
+lb_si_yr1$X <- NULL
+lb_si_yr2$X <- NULL
+dep_discharge_si_yr1$X <- NULL
+dep_discharge_si_yr2$X <- NULL
+dep_nutrients_si_yr1$X <- NULL
+dep_nutrients_si_yr2$X <- NULL
+dep_temp_si_yr1$X <- NULL
+dep_temp_si_yr2$X <- NULL
+
+```
+
+
+#Getting deployment-level litter breakdown data - YR1 and YR2, then bind the two
+```{r}
+#YR1
+summ_k_coarse_yr1 <- summarySE(data=lb_si_yr1,measurevar="abs_val_k_coarse", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_coarse_yr1)[colnames(summ_k_coarse_yr1)=="abs_val_k_coarse"] <- "mean_k_coarse"
+colnames(summ_k_coarse_yr1)[colnames(summ_k_coarse_yr1)=="sd"] <- "sd_k_coarse"
+colnames(summ_k_coarse_yr1)[colnames(summ_k_coarse_yr1)=="se"] <- "se_k_coarse"
+colnames(summ_k_coarse_yr1)[colnames(summ_k_coarse_yr1)=="ci"] <- "ci_k_coarse"
+colnames(summ_k_coarse_yr1)[colnames(summ_k_coarse_yr1)=="N"] <- "N_coarse"
+
+summ_k_fine_yr1 <- summarySE(data=lb_si_yr1,measurevar="abs_val_k_fine", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_fine_yr1)[colnames(summ_k_fine_yr1)=="abs_val_k_fine"] <- "mean_k_fine"
+colnames(summ_k_fine_yr1)[colnames(summ_k_fine_yr1)=="sd"] <- "sd_k_fine"
+colnames(summ_k_fine_yr1)[colnames(summ_k_fine_yr1)=="se"] <- "se_k_fine"
+colnames(summ_k_fine_yr1)[colnames(summ_k_fine_yr1)=="ci"] <- "ci_k_fine"
+colnames(summ_k_fine_yr1)[colnames(summ_k_fine_yr1)=="N"] <- "N_fine"
+
+summ_k_shred_yr1 <- summarySE(data=lb_si_yr1,measurevar="abs_val_k_shred", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_shred_yr1)[colnames(summ_k_shred_yr1)=="abs_val_k_shred"] <- "mean_k_shred"
+colnames(summ_k_shred_yr1)[colnames(summ_k_shred_yr1)=="sd"] <- "sd_k_shred"
+colnames(summ_k_shred_yr1)[colnames(summ_k_shred_yr1)=="se"] <- "se_k_shred"
+colnames(summ_k_shred_yr1)[colnames(summ_k_shred_yr1)=="ci"] <- "ci_k_shred"
+colnames(summ_k_shred_yr1)[colnames(summ_k_shred_yr1)=="N"] <- "N_shred"
+
+###NEW SHREDDER K (Lecerf et al. 2017)!### -- YEAR 1
+summ_k_shred_new_yr1 <- summarySE(data=lb_si_yr1,measurevar="new_shredder_k", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_shred_new_yr1)[colnames(summ_k_shred_new_yr1)=="new_shredder_k"] <- "mean_k_shred_new"
+colnames(summ_k_shred_new_yr1)[colnames(summ_k_shred_new_yr1)=="sd"] <- "sd_k_shred_new"
+colnames(summ_k_shred_new_yr1)[colnames(summ_k_shred_new_yr1)=="se"] <- "se_k_shred_new"
+colnames(summ_k_shred_new_yr1)[colnames(summ_k_shred_new_yr1)=="ci"] <- "ci_k_shred_new"
+colnames(summ_k_shred_new_yr1)[colnames(summ_k_shred_new_yr1)=="N"] <- "N_shred_new"
+
+mergecf1 <- merge(summ_k_coarse_yr1, summ_k_fine_yr1, by=c("date_dep", "date_coll", "rhodo_acer", "stream"))
+mergecfs1 <- merge(mergecf1, summ_k_shred_yr1, by=c("date_dep","date_coll", "rhodo_acer", "stream"))
+mergecfss1 <- merge(mergecfs1, summ_k_shred_new_yr1, by=c("date_dep","date_coll", "rhodo_acer", "stream"))
+lb_si_yr1_dep <- merge(mergecfss1, deployments_yr1, by=c("date_dep", "date_coll"))
+
+#YR2
+summ_k_coarse_yr2 <- summarySE(data=lb_si_yr2,measurevar="abs_val_k_coarse", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_coarse_yr2)[colnames(summ_k_coarse_yr2)=="abs_val_k_coarse"] <- "mean_k_coarse"
+colnames(summ_k_coarse_yr2)[colnames(summ_k_coarse_yr2)=="sd"] <- "sd_k_coarse"
+colnames(summ_k_coarse_yr2)[colnames(summ_k_coarse_yr2)=="se"] <- "se_k_coarse"
+colnames(summ_k_coarse_yr2)[colnames(summ_k_coarse_yr2)=="ci"] <- "ci_k_coarse"
+colnames(summ_k_coarse_yr2)[colnames(summ_k_coarse_yr2)=="N"] <- "N_coarse"
+
+summ_k_fine_yr2 <- summarySE(data=lb_si_yr2,measurevar="abs_val_k_fine", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_fine_yr2)[colnames(summ_k_fine_yr2)=="abs_val_k_fine"] <- "mean_k_fine"
+colnames(summ_k_fine_yr2)[colnames(summ_k_fine_yr2)=="sd"] <- "sd_k_fine"
+colnames(summ_k_fine_yr2)[colnames(summ_k_fine_yr2)=="se"] <- "se_k_fine"
+colnames(summ_k_fine_yr2)[colnames(summ_k_fine_yr2)=="ci"] <- "ci_k_fine"
+colnames(summ_k_fine_yr2)[colnames(summ_k_fine_yr2)=="N"] <- "N_fine"
+
+summ_k_shred_yr2 <- summarySE(data=lb_si_yr2,measurevar="abs_val_k_shred", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_shred_yr2)[colnames(summ_k_shred_yr2)=="abs_val_k_shred"] <- "mean_k_shred"
+colnames(summ_k_shred_yr2)[colnames(summ_k_shred_yr2)=="sd"] <- "sd_k_shred"
+colnames(summ_k_shred_yr2)[colnames(summ_k_shred_yr2)=="se"] <- "se_k_shred"
+colnames(summ_k_shred_yr2)[colnames(summ_k_shred_yr2)=="ci"] <- "ci_k_shred"
+colnames(summ_k_shred_yr2)[colnames(summ_k_shred_yr2)=="N"] <- "N_shred"
+
+###NEW SHREDDER K (Lecerf et al. 2017)!### -- YEAR 2
+summ_k_shred_new_yr2 <- summarySE(data=lb_si_yr2,measurevar="new_shredder_k", groupvars=c("date_dep","date_coll", "rhodo_acer", "stream"), na.rm=TRUE)
+colnames(summ_k_shred_new_yr2)[colnames(summ_k_shred_new_yr2)=="new_shredder_k"] <- "mean_k_shred_new"
+colnames(summ_k_shred_new_yr2)[colnames(summ_k_shred_new_yr2)=="sd"] <- "sd_k_shred_new"
+colnames(summ_k_shred_new_yr2)[colnames(summ_k_shred_new_yr2)=="se"] <- "se_k_shred_new"
+colnames(summ_k_shred_new_yr2)[colnames(summ_k_shred_new_yr2)=="ci"] <- "ci_k_shred_new"
+colnames(summ_k_shred_new_yr2)[colnames(summ_k_shred_new_yr2)=="N"] <- "N_shred_new"
+
+mergecf2 <- merge(summ_k_coarse_yr2, summ_k_fine_yr2, by=c("date_dep", "date_coll", "rhodo_acer", "stream"))
+mergecfs2 <- merge(mergecf2, summ_k_shred_yr2, by=c("date_dep", "date_coll", "rhodo_acer", "stream"))
+mergecfss2 <- merge(mergecfs2, summ_k_shred_new_yr2, by=c("date_dep","date_coll", "rhodo_acer", "stream"))
+lb_si_yr2_dep <- merge(mergecfss2, deployments_yr2, by=c("date_dep","date_coll"))
+
+```
+
+
+Make YR1 and YR2 LB + phys/chem dfs
+```{r} 
+#YR1
+merge_lb_temp <- merge(lb_si_yr1_dep, dep_temp_si_yr1, by=c("date_dep", "date_coll", "stream", "deployment"))
+merge_lb_temp_dis <- merge(merge_lb_temp, dep_discharge_si_yr1, by=c("date_dep", "date_coll", "stream", "deployment"))
+all_si_yr1_lb_phys_chem <- merge(merge_lb_temp_dis, dep_nutrients_si_yr1, by=c("date_dep", "date_coll", "stream", "deployment"))
+
+#YR2
+merge_lb_temp2 <- merge(lb_si_yr2_dep, dep_temp_si_yr2, by=c("date_dep","date_coll", "stream", "deployment"))
+merge_lb_temp_dis2 <- merge(merge_lb_temp2, dep_discharge_si_yr2, by=c("date_dep","date_coll", "stream", "deployment"))
+all_si_yr2_lb_phys_chem <- merge(merge_lb_temp_dis2, dep_nutrients_si_yr2, by=c("date_dep","date_coll", "stream", "deployment"))
+
+#write csvs for both years separately:
+write.csv(all_si_yr1_lb_phys_chem, "all_si_yr1_lb_phys_chem_3May24.csv")
+write.csv(all_si_yr2_lb_phys_chem, "all_si_yr2_lb_phys_chem_3May24.csv")
+```
+
+
+Make 1 big df with both years
+```{r}
+
+all_si_lb_phys_chem_yr1_yr2 <- rbind(all_si_yr1_lb_phys_chem, all_si_yr2_lb_phys_chem)
+
+#write a csv for all the data
+write.csv(all_si_lb_phys_chem_yr1_yr2, "all_si_lb_phys_chem_yr1_yr2_3May24.csv")
+
+```
+
+
+
+
