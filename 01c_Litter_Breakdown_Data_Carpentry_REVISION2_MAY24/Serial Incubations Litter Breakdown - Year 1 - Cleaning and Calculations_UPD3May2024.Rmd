@@ -1,0 +1,331 @@
+---
+title: "Serial Incubations Litter Breakdown - Year 1 - Cleaning and Calculations_UPD4Mar23"
+author: "Carolyn Cummins"
+date: "10/3/2023"
+output: html_document
+---
+
+This file contains the clean-up, organization, and breakdown calculations for Year 1 of the Serial Incubations litter breakdown data.
+
+***UPDATED 19 APRIL 2022 -- QAQC'ed the data to account for 1.) messed up deployments and 2.) bags with holes.
+
+****UPDATED AGAIN 4 MARCH 2023 -- final data QC -- found some additional bags with holes and decided to exclude the bags that got collected in the wrong months.
+
+*******UPDATED 27 September 2023 for MS revision -- lines 157 and 159 now contain calculations to estimate k without taking the absolute value. This is to determine whether there are any "Weight gains" in the dataset, which would show up as positive k-values before taking the absolute value.
+
+*********UPDATED 3 October 2023 for MS revision -- filtered the dataset to exclude weight gains (only one coarse-k was interpreted as a weight gain in the dataset, and this value was likely measurement or data recording error. This value was excluded, but this also resulted in the exclusion of NA's and "Inf" values of k from the dataset in this script. This is fine because those values get excluded anyway in the "SI_Litter_Breakdown_Analyses" file.)
+
+************UPDATED 3 May 2024 for second MS revision - changed "absolute value" calculations to multiplying by -1. This does not change any results since all positive values for k were already filtered out at the last stage (only one such value), but is more accurate and helps add clarity and accuracy to the methods
+
+set WD and packages
+```{r}
+library(plyr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+```
+
+
+Handling Loss - Calculations, get correction factors
+```{r}
+handling_loss_data <- read.csv("handling_loss_SI_03Dec2020.csv")
+
+handling_loss_data$mass_lost_g <- ((handling_loss_data$DM_start_g)-(handling_loss_data$DM_end_g))
+handling_loss_data$percent_mass_lost <- (100*(handling_loss_data$mass_lost_g/handling_loss_data$DM_start_g)) 
+handling_loss_data$prop_sample_afdm <- (1-(handling_loss_data$ash_g/handling_loss_data$subsample_g))
+handling_loss_data$afdm <- (handling_loss_data$prop_sample_afdm*handling_loss_data$DM_end_g)
+
+handling_loss_data_rhodo <- handling_loss_data[which(handling_loss_data$rhodo_acer=="R"),] 
+handling_loss_data_acer <- handling_loss_data[which(handling_loss_data$rhodo_acer=="A"),]
+
+avg_handling_loss_rhodo_g <- mean(handling_loss_data_rhodo$mass_lost_g)
+avg_handling_loss_acer_g <- mean(handling_loss_data_acer$mass_lost_g)
+
+corr_factor_rhodo_afdm_start <- mean(handling_loss_data_rhodo$prop_sample_afdm)
+corr_factor_acer_afdm_start <- mean(handling_loss_data_acer$prop_sample_afdm)
+
+```
+
+
+Read in the coarse mesh litter breakdown data, do calculations
+```{r}
+
+coarse_mesh_data_yr1 <- read.csv("coarse_SI_YR1_4Mar23.csv")
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1 %>% mutate(date_dep=mdy(date_dep))
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1 %>% mutate(date_coll=mdy(date_coll))
+
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1 %>% mutate(unique.id=paste(bag_ID, rhodo_acer, date_dep, date_coll, stream, sep="/"))
+coarse_holes <- coarse_mesh_data_yr1 %>% filter(hole=="hole")
+
+#corrections based on Handling Loss
+coarse_mesh_data_yr1$DM_start_handloss_g <- with(coarse_mesh_data_yr1, ifelse(rhodo_acer %in% "R",(DM_start_g-avg_handling_loss_rhodo_g), DM_start_g-avg_handling_loss_acer_g))
+
+coarse_mesh_data_yr1$afdm_start <- with(coarse_mesh_data_yr1, ifelse(rhodo_acer %in% "R",(DM_start_handloss_g*corr_factor_rhodo_afdm_start), DM_start_handloss_g*corr_factor_acer_afdm_start))
+
+#Get %AFDM remaining - first have to get the proportion of the sample that was AFDM, then apply this to the final dry mass, then divide this by the starting AFDM and multiply by 100
+coarse_mesh_data_yr1$prop_sample_afdm <- 1-((coarse_mesh_data_yr1$tin_ash_g-coarse_mesh_data_yr1$tin_g)/(coarse_mesh_data_yr1$tin_DM_g-coarse_mesh_data_yr1$tin_g))
+
+coarse_mesh_data_yr1$afdm_final <- coarse_mesh_data_yr1$prop_sample_afdm*coarse_mesh_data_yr1$DM_end_g
+
+coarse_mesh_data_yr1$percent_afdm_rem_C <- 100*(coarse_mesh_data_yr1$afdm_final/coarse_mesh_data_yr1$afdm_start)
+
+coarse_mesh_data_yr1$bag_n <- substring(coarse_mesh_data_yr1$bag_ID,2,5) #this is so I can merge coarse and fine by bag #
+
+#remove WS01 
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1 %>% filter(!stream %in% c("WS01"))
+#1152-1056
+
+#remove bags with holes from the df
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1[!(coarse_mesh_data_yr1$hole=="hole"),]
+#1056 -> 1042 -- 14 bags with holes removed based on final QC
+
+#remove bags that were collected in the wrong month. These have a QC flag -- "QC" in the QC column
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1[!(coarse_mesh_data_yr1$QC=="QC"),]
+#1042 -> 1034 as expected
+
+```
+
+
+3 May 2024 - check for values that would be interpreted as weight "gains"
+```{r}
+
+gains_c <- coarse_mesh_data_yr1 %>% filter(percent_afdm_rem_C>100) #coarse "gains" = 1
+
+#we will remove this value now
+coarse_mesh_data_yr1 <- coarse_mesh_data_yr1 %>% filter(!(bag_n=="0302" & date_dep=="2018-07-05"))
+#1034 -> 1033 as expected
+
+```
+
+
+Read in the fine mesh litter breakdown data, add calculations
+```{r}
+
+fine_mesh_data_yr1 <- read.csv("fine_SI_YR1_4Mar23.csv")
+
+fine_mesh_data_yr1 <- fine_mesh_data_yr1 %>% mutate(date_dep=mdy(date_dep))
+fine_mesh_data_yr1 <- fine_mesh_data_yr1 %>% mutate(date_coll=mdy(date_coll))
+
+fine_mesh_data_yr1 <- fine_mesh_data_yr1 %>% mutate(unique.id=paste(bag_ID, rhodo_acer, date_dep, date_coll, stream, sep="/"))
+fine_holes <- fine_mesh_data_yr1 %>% filter(hole=="hole")
+
+fine_mesh_data_yr1$afdm_start <- with(fine_mesh_data_yr1, ifelse(rhodo_acer %in% "R",(DM_start_g*corr_factor_rhodo_afdm_start), DM_start_g*corr_factor_acer_afdm_start))
+
+#Get %AFDM remaining - first have to get final AFDM which for fine mesh is just the final dry mass minus the ash (this is because there is no subsampling for fine mesh because we are able to put the whole sample in the tin and ash it). Then, we get the percent AFDM remaining by dividing the final AFDM by the starting AFDM and multiplying by 100
+fine_mesh_data_yr1$afdm_final <- (fine_mesh_data_yr1$tin_DM_g-fine_mesh_data_yr1$tin_ash_g)
+
+fine_mesh_data_yr1$percent_afdm_rem_F <- 100*(fine_mesh_data_yr1$afdm_final/fine_mesh_data_yr1$afdm_start)
+
+fine_mesh_data_yr1$bag_n <- substring(fine_mesh_data_yr1$bag_ID,2,5) #this is so I can merge coarse and fine by bag #
+
+
+#remove WS01
+fine_mesh_data_yr1 <- fine_mesh_data_yr1 %>% filter(!stream %in% c("WS01"))
+#1152 -> 1056
+
+#remove bags with holes from the df
+fine_mesh_data_yr1 <- fine_mesh_data_yr1[!(fine_mesh_data_yr1$hole=="hole"),]
+#1056 -> 1043 -- 13 bags removed based on final QC
+
+#remove bags collected in the wrong month
+fine_mesh_data_yr1 <- fine_mesh_data_yr1[!(fine_mesh_data_yr1$QC=="QC"),]
+#1043 -> 1035 as expected
+
+```
+
+
+```{r}
+
+gains_f <- fine_mesh_data_yr1 %>% filter(percent_afdm_rem_F>100) #no fine "gains"
+
+```
+
+
+Getting dataframes ready to merge, merge coarse and fine -- the "sub" dfs only have the necessary subset of columns from the dfs above (for simplicity)
+```{r}
+
+coarse_mesh_data_yr1_sub <- coarse_mesh_data_yr1[, c("bag_n", "rhodo_acer", "date_dep",
+                                                     "date_coll", "stream", "percent_afdm_rem_C")]
+
+fine_mesh_data_yr1_sub <- fine_mesh_data_yr1[, c("bag_n", "rhodo_acer", "date_dep",
+                                                 "date_coll", "stream", "percent_afdm_rem_F")]
+
+coarse_fine_data_yr1_all<-full_join(coarse_mesh_data_yr1_sub,fine_mesh_data_yr1_sub,
+                                           by=c("bag_n","rhodo_acer", "date_dep",
+                                                "date_coll", "stream"))
+
+coarse_fine_data_yr1_all <- coarse_fine_data_yr1_all[order(coarse_fine_data_yr1_all[,3]),] 
+
+```
+
+
+Checking that the joined df has the right number of observations
+```{r}
+
+coarse_mesh_data_yr1_sub.check <- coarse_mesh_data_yr1_sub %>% mutate(unique.id=paste(bag_n, rhodo_acer, date_dep, date_coll, stream, sep="/"))
+fine_mesh_data_yr1_sub.check <- fine_mesh_data_yr1_sub %>% mutate(unique.id=paste(bag_n, rhodo_acer, date_dep, date_coll, stream, sep="/"))
+
+coarse.unique.1 <- coarse_mesh_data_yr1_sub.check$unique.id
+fine.unique.1 <- fine_mesh_data_yr1_sub.check$unique.id
+
+setdiff(coarse.unique.1, fine.unique.1)
+setdiff(fine.unique.1, coarse.unique.1)
+
+#comparing these lists to the "holes" dataframes, we can see that the only ones removed from the final joined df are 2 bag numbers for which both coarse and fine had holes, plus the 8 bags in both coarse and fine that were deployed in the wrong year and removed. 1056-2-8=1046, so the joined df has the correct number of observations!
+
+```
+
+
+
+Add calculations to the merged dataframe
+```{r}
+
+sum(is.na(coarse_fine_data_yr1_all$percent_afdm_rem_C))
+#59 NA's BEFORE taking natural log - due to bag loss, etc. and likely because not all NA's are in common between coarse and fine -- causing there to be an NA for the coarse-mesh value in the merge but we retain the fine-mesh value or vice versa (see above)
+
+coarse_fine_data_yr1_all$ln_percent_afdm_rem_C<-log(coarse_fine_data_yr1_all$percent_afdm_rem_C)
+#at this stage, any values where percent afdm remaining is NA, negative, or 0 will result in a ln_percent_afdm_rem_C value that is NA, NaN, or infinity
+#how many coarse mesh bags have NA, NaN, or infinity as their ln_percent_afdm_rem_C value?
+sum(is.na(coarse_fine_data_yr1_all$ln_percent_afdm_rem_C))
+cf_yr1_all_NaN_lnC <- coarse_fine_data_yr1_all %>% filter(ln_percent_afdm_rem_C %in% c("NaN", "-Inf", "Inf"))
+#60 NA's. Also 4 -Inf (percent afdm remaining was 0) and 1 NaN (percent afdm remaining was negative)
+
+sum(is.na(coarse_fine_data_yr1_all$percent_afdm_rem_F))
+#25 NA's BEFORE taking natural log
+coarse_fine_data_yr1_all$ln_percent_afdm_rem_F<-log(coarse_fine_data_yr1_all$percent_afdm_rem_F)
+sum(is.na(coarse_fine_data_yr1_all$ln_percent_afdm_rem_F))
+cf_yr1_all_NaN_lnF <- coarse_fine_data_yr1_all %>% filter(ln_percent_afdm_rem_F %in% c("NaN", "-Inf", "Inf"))
+#still 25 NA's. No -Inf or NaN.
+
+#get days
+coarse_fine_data_yr1_all$days_in_record<-as.numeric(coarse_fine_data_yr1_all$date_coll-coarse_fine_data_yr1_all$date_dep)
+
+#calculate log of the starting percent afdm which will always be 100
+coarse_fine_data_yr1_all$ln_percent_afdm_start <- log(100)
+
+#k calculations
+coarse_fine_data_yr1_all <- coarse_fine_data_yr1_all %>%
+  mutate(k_coarse=((ln_percent_afdm_start-ln_percent_afdm_rem_C)/(0-days_in_record)))
+
+coarse_fine_data_yr1_all <- coarse_fine_data_yr1_all %>%
+  mutate(k_fine=((ln_percent_afdm_start-ln_percent_afdm_rem_F)/(0-days_in_record)))
+
+coarse_fine_data_yr1_all <- coarse_fine_data_yr1_all %>% 
+  mutate(abs_val_k_coarse = (-(k_coarse)))
+
+coarse_fine_data_yr1_all <- coarse_fine_data_yr1_all %>% 
+  mutate(abs_val_k_fine = (-(k_fine)))
+#Note: absolute values are not actual absolute values but are the k-values multiplied by negative 1.
+
+```
+
+
+Calculations for shredder breakdown
+```{r}
+
+coarse_fine_data_yr1_all$abs_val_k_shred<-as.numeric(coarse_fine_data_yr1_all$abs_val_k_coarse-coarse_fine_data_yr1_all$abs_val_k_fine)
+
+```
+
+
+Lecerf et al. shredder k calculations - added 18 January 2022
+"rate of litter fragmentation"
+new_shredder_k = k_coarse - ((k_fine-k_coarse)/(ln(k_fine)-ln(k_coarse)))
+```{r}
+
+coarse_fine_data_yr1_all$new_shredder_k <- (coarse_fine_data_yr1_all$abs_val_k_coarse - ((coarse_fine_data_yr1_all$abs_val_k_fine-coarse_fine_data_yr1_all$abs_val_k_coarse)/(log(coarse_fine_data_yr1_all$abs_val_k_fine)-log(coarse_fine_data_yr1_all$abs_val_k_coarse))))
+
+coarse_fine_data_yr1_all_negshred <- coarse_fine_data_yr1_all %>% filter(new_shredder_k<0)
+#172 negative shredder k's in YR1
+
+```
+
+
+Compare new_shredder_k (lecerf) to coarse-fine way of measuring shredder k
+```{r}
+
+plot.compare.shredder.k.yr1 <- ggplot(coarse_fine_data_yr1_all, aes(x=abs_val_k_shred, y=new_shredder_k)) + theme_classic() + geom_point() +
+  geom_smooth(method="lm")
+plot.compare.shredder.k.yr1
+
+model.compare.shredder.k.yr1 <- lm(new_shredder_k~abs_val_k_shred, data=coarse_fine_data_yr1_all)
+summary(model.compare.shredder.k.yr1)
+#slope = 0.5998, R^2 = 0.9966
+
+```
+
+
+
+```{r}
+
+write.csv(coarse_fine_data_yr1_all, "litter_breakdown_coarse_fine_yr1_all.3May24.csv")
+
+```
+
+
+```{r}
+
+acer_coarse_mean_data_yr1 <- coarse_fine_data_yr1_all %>% filter(rhodo_acer=="A") %>% 
+  filter(!abs_val_k_coarse %in% c("Inf", "NaN", "NA")) %>% 
+  filter(!is.na(abs_val_k_coarse))
+
+mean_a_k_coarse.1 <- mean(acer_coarse_mean_data_yr1$abs_val_k_coarse, na.rm=T)
+sd_a_k_coarse.1 <- sd(acer_coarse_mean_data_yr1$abs_val_k_coarse, na.rm=T)
+
+```
+
+```{r}
+
+acer_fine_mean_data_yr1 <- coarse_fine_data_yr1_all %>% filter(rhodo_acer=="A") %>% 
+  filter(!abs_val_k_fine %in% c("Inf", "NaN", "NA")) %>% 
+  filter(!is.na(abs_val_k_fine))
+
+mean_a_k_fine.1 <- mean(acer_coarse_mean_data_yr1$abs_val_k_fine, na.rm=T)
+sd_a_k_fine.1 <- sd(acer_coarse_mean_data_yr1$abs_val_k_fine, na.rm=T)
+
+```
+
+```{r}
+
+acer_shred_mean_data_yr1 <- coarse_fine_data_yr1_all %>% filter(rhodo_acer=="A") %>% 
+  filter(!abs_val_k_shred %in% c("Inf", "NaN", "NA")) %>% 
+  filter(!is.na(abs_val_k_shred))
+
+mean_a_k_shred.1 <- mean(acer_coarse_mean_data_yr1$abs_val_k_shred, na.rm=T)
+sd_a_k_shred.1 <- sd(acer_coarse_mean_data_yr1$abs_val_k_shred, na.rm=T)
+
+```
+
+
+```{r}
+
+rhodo_coarse_mean_data_yr1 <- coarse_fine_data_yr1_all %>% filter(rhodo_acer=="R") %>% 
+  filter(!abs_val_k_coarse %in% c("Inf", "NaN", "NA")) %>% 
+  filter(!is.na(abs_val_k_coarse))
+
+mean_r_k_coarse.1 <- mean(rhodo_coarse_mean_data_yr1$abs_val_k_coarse, na.rm=T)
+sd_r_k_coarse.1 <- sd(rhodo_coarse_mean_data_yr1$abs_val_k_coarse, na.rm=T)
+
+```
+
+```{r}
+
+rhodo_fine_mean_data_yr1 <- coarse_fine_data_yr1_all %>% filter(rhodo_acer=="R") %>% 
+  filter(!abs_val_k_fine %in% c("Inf", "NaN", "NA")) %>% 
+  filter(!is.na(abs_val_k_fine))
+
+mean_r_k_fine.1 <- mean(rhodo_fine_mean_data_yr1$abs_val_k_fine, na.rm=T)
+sd_r_k_fine.1 <- sd(rhodo_fine_mean_data_yr1$abs_val_k_fine, na.rm=T)
+
+```
+
+```{r}
+
+rhodo_shred_mean_data_yr1 <- coarse_fine_data_yr1_all %>% filter(rhodo_acer=="R") %>% 
+  filter(!abs_val_k_shred %in% c("Inf", "NaN", "NA")) %>% 
+  filter(!is.na(abs_val_k_shred))
+
+mean_r_k_shred.1 <- mean(rhodo_shred_mean_data_yr1$abs_val_k_shred, na.rm=T)
+sd_r_k_shred.1 <- sd(rhodo_shred_mean_data_yr1$abs_val_k_shred, na.rm=T)
+
+```
